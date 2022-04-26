@@ -1118,6 +1118,8 @@ dependencies = [
  "pretty_env_logger",
  "rand 0.8.5",
  "rkyv",
+ "serde",
+ "serde_json",
  "smallvec",
  "tokio",
 ]
@@ -2545,9 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "rkyv"
-version = "0.7.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5230ae2981a885590b0dc84e0b24c0ed23ad24f7adc0eb824b26cafa961f7c36"
+version = "0.7.37"
 dependencies = [
  "bytecheck",
  "hashbrown 0.12.0",
@@ -2559,9 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "rkyv_derive"
-version = "0.7.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fc752d5925dbcb324522f3a4c93193d17f107b2e11810913aa3ad352fa01480"
+version = "0.7.37"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2614,6 +2612,12 @@ dependencies = [
  "pin-project 0.4.29",
  "static_assertions",
 ]
+
+[[package]]
+name = "ryu"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73b4b750c782965c211b42f022f59af1fbceabdd026623714f104152f1ec149f"
 
 [[package]]
 name = "salsa20"
@@ -2670,6 +2674,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.79"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e8d9fa5c3b304765ce1fd9c4c8a3de2c8db365a5b91be52f186efc675681d95"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
