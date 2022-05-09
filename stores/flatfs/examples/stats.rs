@@ -14,11 +14,12 @@ fn main() -> Result<()> {
     let flatfs = Flatfs::new(&path)?;
     println!("Size on disk: {} bytes", flatfs.disk_usage());
 
+    let mut counter = HashMap::new();
     let mut refs = HashSet::new();
 
     for v in flatfs.iter() {
         let (key, value) = v?;
-        use libipld::{prelude::*, Ipld, IpldCodec};
+        use libipld::{prelude::Codec as _, Ipld, IpldCodec};
         println!("{}", key);
         refs.clear();
 
@@ -27,6 +28,8 @@ fn main() -> Result<()> {
             .is_ok()
         {
             println!("decoded cbor links: {:?}", &refs);
+            let e = counter.entry(Codec::DagCbor).or_insert(0);
+            *e += 1;
         }
 
         if IpldCodec::DagJson
@@ -34,6 +37,8 @@ fn main() -> Result<()> {
             .is_ok()
         {
             println!("decoded json links: {:?}", &refs);
+            let e = counter.entry(Codec::DagJson).or_insert(0);
+            *e += 1;
         }
 
         if IpldCodec::DagPb
@@ -41,8 +46,19 @@ fn main() -> Result<()> {
             .is_ok()
         {
             println!("decoded pb links: {:?}", &refs);
+            let e = counter.entry(Codec::DagPb).or_insert(0);
+            *e += 1;
+        }
+        if IpldCodec::Raw
+            .references::<Ipld, _>(&value, &mut refs)
+            .is_ok()
+        {
+            println!("decoded raw links: {:?}", &refs);
+            let e = counter.entry(Codec::Raw).or_insert(0);
+            *e += 1;
         }
     }
+    println!("stats: {:?}", counter);
 
     Ok(())
 }
