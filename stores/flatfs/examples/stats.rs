@@ -14,27 +14,35 @@ fn main() -> Result<()> {
     let flatfs = Flatfs::new(&path)?;
     println!("Size on disk: {} bytes", flatfs.disk_usage());
 
-    let mut codecs = HashMap::<Codec, usize>::new();
-    let mut unknown_codecs = HashSet::new();
-    let mut invalid_cids = Vec::new();
+    let mut refs = HashSet::new();
 
-    for key in flatfs.keys() {
-        let key = key?;
-        if let Ok(c) = key.parse::<cid::Cid>() {
-            if let Ok(codec) = c.codec().try_into() {
-                let count = codecs.entry(codec).or_insert(0);
-                *count += 1;
-            } else {
-                unknown_codecs.insert(c.codec());
-            }
-        } else {
-            invalid_cids.push(key);
+    for v in flatfs.iter() {
+        let (key, value) = v?;
+        use libipld::{prelude::*, Ipld, IpldCodec};
+        println!("{}", key);
+        refs.clear();
+
+        if IpldCodec::DagCbor
+            .references::<Ipld, _>(&value, &mut refs)
+            .is_ok()
+        {
+            println!("decoded cbor links: {:?}", &refs);
+        }
+
+        if IpldCodec::DagJson
+            .references::<Ipld, _>(&value, &mut refs)
+            .is_ok()
+        {
+            println!("decoded json links: {:?}", &refs);
+        }
+
+        if IpldCodec::DagPb
+            .references::<Ipld, _>(&value, &mut refs)
+            .is_ok()
+        {
+            println!("decoded pb links: {:?}", &refs);
         }
     }
-
-    println!("{:?}", codecs);
-    println!("{:?}", unknown_codecs);
-    println!("{:?}", invalid_cids);
 
     Ok(())
 }
