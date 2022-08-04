@@ -9,6 +9,7 @@ use iroh_gateway::{
     metrics,
 };
 use iroh_metrics::gateway::Metrics;
+use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 
@@ -29,6 +30,8 @@ struct Args {
     tracing: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
+    #[clap(long)]
+    db_path: PathBuf,
 }
 
 impl Args {
@@ -69,10 +72,35 @@ async fn main() -> Result<()> {
     )
     .unwrap();
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
+
+    let (rpc_store_addr_server, rpc_store_addr_client) = Addr::new_mem();
+    config.rpc_client.store_addr = Some(rpc_store_addr_client.clone());
+    let mut prom_registry = Registry::default();
+    let store_task = {
+        let db_path = &args.db_path;
+        let store_config = iroh_store::Config {
+            path: db_path.to_path_buf(),
+            rpc_client: config.rpc_client.clone(),
+            metrics: config.metrics.clone(),
+        };
+
+        let store_metrics = iroh_metrics::store::Metrics::new(&mut prom_registry);
+        let store = if store_config.path.exists() {
+            iroh_store::Store::open(store_config, store_metrics).await?
+        } else {
+            iroh_store::Store::create(store_config, store_metrics).await?
+        };
+        tokio::spawn(async move {
+            iroh_store::rpc::new(rpc_store_addr_server, store)
+                .await
+                .unwrap()
+        })
+    };
+
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
-    let mut prom_registry = Registry::default();
+
     let gw_metrics = Metrics::new(&mut prom_registry);
     let rpc_addr = config
         .server_rpc_addr()?
@@ -91,6 +119,7 @@ async fn main() -> Result<()> {
 
     iroh_util::block_until_sigint().await;
     core_task.abort();
+    store_task.abort();
 
     metrics_handle.shutdown();
     Ok(())

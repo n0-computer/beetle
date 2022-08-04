@@ -52,6 +52,8 @@ http-serde = "1.1.0"
 config = "0.13.1"
 async-trait = "0.1.56"
 
+iroh-store = { path = "../iroh-store" }
+
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
 
