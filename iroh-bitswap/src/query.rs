@@ -3,9 +3,9 @@ use bytes::Bytes;
 use cid::Cid;
 use libp2p::{
     swarm::{NetworkBehaviourAction, NotifyHandler},
-    PeerId,
+    Multiaddr, PeerId,
 };
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     behaviour::{BitswapHandler, QueryError},
@@ -55,7 +55,12 @@ impl QueryManager {
             .count()
     }
 
-    pub fn want(&mut self, cid: Cid, priority: Priority, providers: AHashSet<PeerId>) -> QueryId {
+    pub fn want(
+        &mut self,
+        cid: Cid,
+        priority: Priority,
+        providers: AHashMap<PeerId, Vec<Multiaddr>>,
+    ) -> QueryId {
         self.new_query(Query::Want {
             providers,
             cid,
@@ -64,9 +69,15 @@ impl QueryManager {
         })
     }
 
-    pub fn send(&mut self, receiver: PeerId, cid: Cid, data: Bytes) -> QueryId {
+    pub fn send(
+        &mut self,
+        receiver: PeerId,
+        addrs: &[Multiaddr],
+        cid: Cid,
+        data: Bytes,
+    ) -> QueryId {
         self.new_query(Query::Send {
-            receiver,
+            receiver: (receiver, addrs.into()),
             block: Block { cid, data },
             state: State::New,
         })
@@ -96,7 +107,7 @@ impl QueryManager {
 
         cancel.map(|(providers, cid)| {
             self.new_query(Query::Cancel {
-                providers,
+                providers: providers.into_iter().map(|p| (p, Vec::new())).collect(),
                 cid,
                 state: State::New,
             })
@@ -118,7 +129,7 @@ impl QueryManager {
                 } => {
                     if &block.cid == cid {
                         query_ids.push(*id);
-                        for provider in providers.iter() {
+                        for (provider, _) in providers.iter() {
                             unused_providers.push(*provider);
                         }
 
@@ -142,7 +153,7 @@ impl QueryManager {
 
         for (providers, cid) in cancels.into_iter() {
             self.new_query(Query::Cancel {
-                providers,
+                providers: providers.into_iter().map(|p| (p, Vec::new())).collect(),
                 cid,
                 state: State::New,
             });
@@ -158,8 +169,19 @@ impl QueryManager {
             .iter_mut()
             .filter(|(_, query)| query.contains_provider(peer_id))
         {
+            debug!("disconnected {}, {:?}", peer_id, query);
             match query {
-                Query::Want { state, .. } => {
+                Query::Want {
+                    state, providers, ..
+                } => {
+                    providers.remove(peer_id);
+                    debug!(
+                        "removed provider {}, {} providers left ({:?})",
+                        peer_id,
+                        providers.len(),
+                        state,
+                    );
+
                     if let State::Sent(used_providers) = state {
                         used_providers.remove(peer_id);
                     }
@@ -169,7 +191,10 @@ impl QueryManager {
                         used_providers.remove(peer_id);
                     }
                 }
-                Query::Cancel { state, .. } => {
+                Query::Cancel {
+                    state, providers, ..
+                } => {
+                    providers.remove(peer_id);
                     if let State::Sent(used_providers) = state {
                         used_providers.remove(peer_id);
                     }
@@ -190,10 +215,16 @@ impl QueryManager {
                     providers, state, ..
                 } => {
                     if providers.is_empty() {
-                        if let State::Sent(used_providers) = state {
-                            if used_providers.is_empty() {
+                        match state {
+                            State::New => {
                                 next_query = Some(query_id);
                                 break;
+                            }
+                            State::Sent(used_providers) => {
+                                if used_providers.is_empty() {
+                                    next_query = Some(query_id);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -210,10 +241,16 @@ impl QueryManager {
                     providers, state, ..
                 } => {
                     if providers.is_empty() {
-                        if let State::Sent(used_providers) = state {
-                            if used_providers.is_empty() {
+                        match state {
+                            State::New => {
                                 next_query = Some(query_id);
                                 break;
+                            }
+                            State::Sent(used_providers) => {
+                                if used_providers.is_empty() {
+                                    next_query = Some(query_id);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -320,7 +357,7 @@ impl QueryManager {
                 } => match state {
                     State::New => {
                         msg.add_block(block.clone());
-                        *state = State::Sent([*receiver].into_iter().collect());
+                        *state = State::Sent([receiver.0.clone()].into_iter().collect());
                     }
                     State::Sent(_) => {
                         // nothing to do anymore
@@ -340,7 +377,12 @@ impl QueryManager {
             if msg.is_empty() {
                 error!("{} queries, but message is empty: {:?}", num_queries, msg);
             } else {
-                trace!("sending message to {} {:?}", peer_id, msg);
+                debug!(
+                    "sending message to {} (blocks: {}, wants: {})",
+                    peer_id,
+                    msg.blocks().len(),
+                    msg.wantlist().blocks().count()
+                );
                 return Some(NetworkBehaviourAction::NotifyHandler {
                     peer_id: *peer_id,
                     handler: NotifyHandler::Any,
@@ -357,20 +399,20 @@ impl QueryManager {
 enum Query {
     /// Fetch a single CID.
     Want {
-        providers: AHashSet<PeerId>,
+        providers: AHashMap<PeerId, Vec<Multiaddr>>,
         cid: Cid,
         priority: Priority,
         state: State,
     },
     /// Cancel a single CID.
     Cancel {
-        providers: AHashSet<PeerId>,
+        providers: AHashMap<PeerId, Vec<Multiaddr>>,
         cid: Cid,
         state: State,
     },
     /// Sends a single Block.
     Send {
-        receiver: PeerId,
+        receiver: (PeerId, Vec<Multiaddr>),
         block: Block,
         state: State,
     },
@@ -380,9 +422,9 @@ impl Query {
     fn contains_unused_provider(&self, peer_id: &PeerId) -> bool {
         match self {
             Query::Want { providers, .. } | Query::Cancel { providers, .. } => {
-                providers.contains(peer_id)
+                providers.contains_key(peer_id)
             }
-            Query::Send { receiver, .. } => receiver == peer_id,
+            Query::Send { receiver, .. } => &receiver.0 == peer_id,
         }
     }
 
@@ -394,7 +436,7 @@ impl Query {
             | Query::Cancel {
                 providers, state, ..
             } => {
-                if providers.contains(peer_id) {
+                if providers.contains_key(peer_id) {
                     return true;
                 }
                 if let State::Sent(p) = state {
@@ -405,7 +447,7 @@ impl Query {
             Query::Send {
                 receiver, state, ..
             } => {
-                if receiver == peer_id {
+                if &receiver.0 == peer_id {
                     return true;
                 }
                 if let State::Sent(p) = state {
@@ -445,7 +487,9 @@ mod tests {
         let query_id = queries.want(
             cid,
             100,
-            [provider_id_1, provider_id_2].into_iter().collect(),
+            [(provider_id_1, Vec::new()), (provider_id_2, Vec::new())]
+                .into_iter()
+                .collect(),
         );
 
         // sent wantlist
@@ -481,7 +525,9 @@ mod tests {
         let query_id = queries.want(
             cid,
             100,
-            [provider_id_1, provider_id_2].into_iter().collect(),
+            [(provider_id_1, Vec::new()), (provider_id_2, Vec::new())]
+                .into_iter()
+                .collect(),
         );
 
         // send wantlist

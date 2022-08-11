@@ -80,7 +80,7 @@ pub struct Node<KeyStorage: Storage> {
 }
 
 enum QueryChannel {
-    GetProviders(Vec<mpsc::Sender<Result<HashSet<PeerId>, String>>>),
+    GetProviders(Vec<mpsc::Sender<Result<HashMap<PeerId, Vec<Multiaddr>>, String>>>),
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -89,7 +89,7 @@ enum QueryKey {
 }
 
 const PROVIDER_LIMIT: usize = 20;
-const NICE_INTERVAL: Duration = Duration::from_secs(6);
+const NICE_INTERVAL: Duration = Duration::from_secs(6 * 60);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
@@ -310,11 +310,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 match rpc_store.get(cid).await {
                                     Ok(Some(data)) => {
                                         trace!("Found data for: {}", cid);
-                                        if let Err(e) = self
-                                            .swarm
-                                            .behaviour_mut()
-                                            .send_block(&sender, cid, data)
-                                        {
+                                        if let Err(e) = self.swarm.behaviour_mut().send_block(
+                                            &sender,
+                                            &[][..],
+                                            cid,
+                                            data,
+                                        ) {
                                             warn!(
                                                 "failed to send block for {} to {}: {:?}",
                                                 cid, sender, e
@@ -392,6 +393,22 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             providers_so_far,
                             ..
                         })) => {
+                            for provider in &providers {
+                                let addrs_swarm =
+                                    self.swarm.behaviour_mut().addresses_of_peer(provider);
+                                let addrs_kad = self
+                                    .swarm
+                                    .behaviour_mut()
+                                    .kad
+                                    .as_mut()
+                                    .unwrap()
+                                    .addresses_of_peer(provider);
+                                debug!(
+                                    "addrs for {}: {:?}\n{:?}",
+                                    provider, addrs_swarm, addrs_kad
+                                );
+                            }
+
                             if step.last {
                                 let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
                             } else {
@@ -408,6 +425,17 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     .kad_queries
                                     .get_mut(&QueryKey::ProviderKey(key.clone()))
                                 {
+                                    let providers: HashMap<_, _> = providers
+                                        .into_iter()
+                                        .map(|provider| {
+                                            let addrs = self
+                                                .swarm
+                                                .behaviour_mut()
+                                                .addresses_of_peer(&provider);
+                                            (provider, addrs)
+                                        })
+                                        .collect();
+
                                     for chan in chans.iter_mut() {
                                         chan.send(Ok(providers.clone())).await.ok();
                                     }

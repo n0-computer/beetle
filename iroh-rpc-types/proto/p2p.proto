@@ -41,7 +41,12 @@ message BitswapResponse {
 
 message Providers {
   // List of providers. Serialized PeerIds
-  repeated bytes providers = 1;
+  repeated Provider providers = 1;
+}
+
+message Provider {
+  bytes provider = 1;
+  repeated bytes addrs = 2;
 }
 
 message Key {

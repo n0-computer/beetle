@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
@@ -10,7 +10,7 @@ use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 use iroh_rpc_types::p2p::{
     BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics, GossipsubPeerIdMsg,
     GossipsubPublishRequest, GossipsubTopicHashMsg, Key, P2p, P2pClientAddr, P2pClientBackend,
-    Providers,
+    Provider, Providers,
 };
 use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{MessageId, TopicHash};
@@ -35,10 +35,20 @@ impl P2pClient {
 
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_bitswap(&self, cid: Cid, providers: HashSet<PeerId>) -> Result<Bytes> {
+    pub async fn fetch_bitswap(
+        &self,
+        cid: Cid,
+        providers: HashMap<PeerId, Vec<Multiaddr>>,
+    ) -> Result<Bytes> {
         debug!("rpc p2p client fetch_bitswap: {:?}", cid);
         let providers = Providers {
-            providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
+            providers: providers
+                .into_iter()
+                .map(|(provider, addrs)| Provider {
+                    provider: provider.to_bytes(),
+                    addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
+                })
+                .collect(),
         };
 
         let req = BitswapRequest {
@@ -50,14 +60,21 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_providers(&self, key: &Cid) -> Result<HashSet<PeerId>> {
+    pub async fn fetch_providers(&self, key: &Cid) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
         let req = Key {
             key: key.hash().to_bytes(),
         };
         let res = self.backend.fetch_provider(req).await?;
-        let mut providers = HashSet::new();
+        let mut providers = HashMap::with_capacity(res.providers.len());
         for provider in res.providers.into_iter() {
-            providers.insert(PeerId::from_bytes(&provider[..])?);
+            providers.insert(
+                PeerId::from_bytes(&provider.provider[..])?,
+                provider
+                    .addrs
+                    .into_iter()
+                    .map(|addr| Multiaddr::try_from(addr))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
         }
         Ok(providers)
     }

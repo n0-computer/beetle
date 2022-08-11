@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::time::Duration;
 
@@ -15,10 +15,10 @@ use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::Mdns;
 use libp2p::multiaddr::Protocol;
 use libp2p::ping::Ping;
-use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
+use libp2p::{relay, Multiaddr};
 use prometheus_client::registry::Registry;
 use tracing::warn;
 
@@ -155,8 +155,14 @@ impl NodeBehaviour {
     }
 
     /// Send a block to a peer over bitswap
-    pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> Result<()> {
-        self.bitswap.send_block(peer_id, cid, data);
+    pub fn send_block(
+        &mut self,
+        peer_id: &PeerId,
+        addrs: &[Multiaddr],
+        cid: Cid,
+        data: Bytes,
+    ) -> Result<()> {
+        self.bitswap.send_block(peer_id, addrs, cid, data);
         Ok(())
     }
 
@@ -165,7 +171,7 @@ impl NodeBehaviour {
         &mut self,
         cid: Cid,
         priority: Priority,
-        providers: HashSet<PeerId>,
+        providers: HashMap<PeerId, Vec<Multiaddr>>,
     ) -> Result<QueryId, Box<dyn Error>> {
         let id = self.bitswap.want_block(cid, priority, providers);
         Ok(id)

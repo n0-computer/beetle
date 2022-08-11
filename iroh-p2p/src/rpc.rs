@@ -23,7 +23,7 @@ use iroh_rpc_types::p2p::{
     GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
     GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
     GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
-    Multiaddrs, P2p as RpcP2p, P2pServerAddr, Providers, VersionResponse,
+    Multiaddrs, P2p as RpcP2p, P2pServerAddr, Provider, Providers, VersionResponse,
 };
 
 struct P2p {
@@ -55,10 +55,18 @@ impl RpcP2p for P2p {
             .providers
             .with_context(|| format!("missing providers for: {}", cid))?;
 
-        let providers: HashSet<PeerId> = providers
+        let providers: HashMap<PeerId, Vec<Multiaddr>> = providers
             .providers
             .into_iter()
-            .map(|p| PeerId::from_bytes(&p).context("invalid provider"))
+            .map(|provider| {
+                let p = PeerId::from_bytes(&provider.provider).context("invalid provider")?;
+                let addrs = provider
+                    .addrs
+                    .into_iter()
+                    .map(|addr| Multiaddr::try_from(addr))
+                    .collect::<Result<_, _>>()?;
+                Ok((p, addrs))
+            })
             .collect::<Result<_>>()?;
 
         ensure!(!providers.is_empty(), "missing providers for: {}", cid);
@@ -100,8 +108,11 @@ impl RpcP2p for P2p {
         while let Some(provider) = r.recv().await {
             match provider {
                 Ok(new_providers) => {
-                    for provider in new_providers {
-                        providers.push(provider.to_bytes());
+                    for (provider, addrs) in new_providers {
+                        providers.push(Provider {
+                            provider: provider.to_bytes(),
+                            addrs: addrs.into_iter().map(|a| a.to_vec()).collect(),
+                        });
                     }
                 }
                 Err(e) => {
@@ -333,12 +344,12 @@ pub enum RpcMessage {
     BitswapRequest {
         cids: Vec<Cid>,
         response_channels: Vec<oneshot::Sender<Result<Block, QueryError>>>,
-        providers: HashSet<PeerId>,
+        providers: HashMap<PeerId, Vec<Multiaddr>>,
     },
     ProviderRequest {
         // TODO: potentially change this to Cid, as that is the only key we use for providers
         key: Key,
-        response_channel: mpsc::Sender<Result<HashSet<PeerId>, String>>,
+        response_channel: mpsc::Sender<Result<HashMap<PeerId, Vec<Multiaddr>>, String>>,
     },
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),

@@ -9,7 +9,7 @@ use libp2p::{
         dial_opts::{DialOpts, PeerCondition},
         NetworkBehaviourAction,
     },
-    PeerId,
+    Multiaddr, PeerId,
 };
 use tracing::trace;
 
@@ -44,6 +44,7 @@ impl Default for Config {
 #[derive(Debug)]
 pub struct Session {
     state: State,
+    addrs: Vec<Multiaddr>,
     query_count: usize,
 }
 
@@ -55,11 +56,13 @@ impl SessionManager {
         }
     }
 
-    pub fn new_connection(&mut self, peer_id: &PeerId) {
+    pub fn new_connection(&mut self, peer_id: &PeerId, addrs: &[Multiaddr]) {
         let session = self.sessions.entry(*peer_id).or_insert(Session {
             state: State::Connected,
+            addrs: Vec::new(),
             query_count: 0,
         });
+        session.addrs.extend_from_slice(addrs);
 
         match session.state {
             State::Dialing(_) | State::New => {
@@ -79,11 +82,18 @@ impl SessionManager {
         }
     }
 
-    pub fn create_session(&mut self, peer_id: &PeerId) {
+    pub fn create_session(&mut self, peer_id: &PeerId, addrs: &[Multiaddr]) {
+        trace!(
+            "create session for {} (exists {})",
+            peer_id,
+            self.sessions.contains_key(peer_id)
+        );
         let session = self.sessions.entry(*peer_id).or_insert(Session {
             state: State::New,
+            addrs: Vec::new(),
             query_count: 0,
         });
+        session.addrs.extend_from_slice(addrs);
         session.query_count += 1;
     }
 
@@ -128,13 +138,15 @@ impl SessionManager {
                         // no dialing this round
                         continue;
                     }
-                    trace!("dialing {}", peer_id);
+                    tracing::debug!("dialing {} {:?}", peer_id, session.addrs);
                     let handler = Default::default();
                     session.state = State::Dialing(Instant::now());
 
                     return Some(NetworkBehaviourAction::Dial {
                         opts: DialOpts::peer_id(*peer_id)
-                            .condition(PeerCondition::Always)
+                            .addresses(session.addrs.clone())
+                            .extend_addresses_through_behaviour()
+                            .condition(PeerCondition::Disconnected)
                             .override_dial_concurrency_factor(
                                 self.config.dial_concurrency_factor_peer,
                             )

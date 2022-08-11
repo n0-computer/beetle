@@ -2,7 +2,7 @@
 //! - `/ipfs/bitswap/1.1.0` and
 //! - `/ipfs/bitswap/1.2.0`.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
@@ -115,11 +115,11 @@ impl Bitswap {
         &mut self,
         cid: Cid,
         priority: Priority,
-        providers: HashSet<PeerId>,
+        providers: HashMap<PeerId, Vec<Multiaddr>>,
     ) -> QueryId {
         debug!("want_block: {}", cid);
-        for provider in providers.iter() {
-            self.sessions.create_session(provider);
+        for (provider, addrs) in providers.iter() {
+            self.sessions.create_session(provider, addrs);
         }
 
         self.metrics.providers_total.inc_by(providers.len() as u64);
@@ -128,12 +128,18 @@ impl Bitswap {
     }
 
     #[instrument(skip(self, data))]
-    pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> QueryId {
+    pub fn send_block(
+        &mut self,
+        peer_id: &PeerId,
+        addrs: &[Multiaddr],
+        cid: Cid,
+        data: Bytes,
+    ) -> QueryId {
         debug!("send_block: {}", cid);
 
         self.metrics.sent_block_bytes.inc_by(data.len() as u64);
-        self.sessions.create_session(peer_id);
-        self.queries.send(*peer_id, cid, data)
+        self.sessions.create_session(peer_id, addrs);
+        self.queries.send(*peer_id, addrs, cid, data)
     }
 
     /// Removes the block from our want list and updates all peers.
@@ -186,8 +192,10 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
+        // TODO: track failed addresses
+        tracing::trace!("connected to {}", peer_id);
         if other_established == 0 {
-            self.sessions.new_connection(peer_id);
+            self.sessions.new_connection(peer_id, &[][..]);
         }
     }
 
@@ -200,6 +208,7 @@ impl NetworkBehaviour for Bitswap {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         remaining_established: usize,
     ) {
+        tracing::trace!("connection closed to {}", peer_id);
         if remaining_established == 0 {
             self.sessions.disconnected(peer_id);
             self.queries.disconnected(peer_id);
@@ -213,7 +222,8 @@ impl NetworkBehaviour for Bitswap {
         _handler: Self::ConnectionHandler,
         _error: &DialError,
     ) {
-        trace!("failed to dial");
+        tracing::trace!("dial failure to {:?}", peer_id);
+
         if let Some(ref peer_id) = peer_id {
             self.sessions.dial_failure(peer_id);
             self.queries.dial_failure(peer_id);
@@ -348,6 +358,7 @@ mod tests {
             .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)))
             .map_err(|err| Error::new(ErrorKind::Other, err))
             .boxed();
+
         (peer_id, transport)
     }
 
@@ -393,10 +404,14 @@ mod tests {
                     Some(SwarmEvent::Behaviour(BitswapEvent::InboundRequest {
                         request: InboundRequest::Want { sender, cid, .. },
                     })) => {
+                        trace!("peer1: req {}", cid);
                         if cid == cid_orig {
-                            swarm1
-                                .behaviour_mut()
-                                .send_block(&sender, cid_orig, data_orig.clone());
+                            swarm1.behaviour_mut().send_block(
+                                &sender,
+                                &[][..],
+                                cid_orig,
+                                data_orig.clone(),
+                            );
                         }
                     }
                     ev => trace!("peer1: {:?}", ev),
@@ -405,11 +420,15 @@ mod tests {
         };
 
         let peer2 = async move {
-            Swarm::dial(&mut swarm2, rx.next().await.unwrap()).unwrap();
-            let orig_id =
-                swarm2
-                    .behaviour_mut()
-                    .want_block(cid, 1000, [peer1_id].into_iter().collect());
+            // dial manually then retrieve
+            let addr = rx.next().await.unwrap();
+            Swarm::dial(&mut swarm2, addr.clone()).unwrap();
+
+            let orig_id = swarm2.behaviour_mut().want_block(
+                cid,
+                1000,
+                [(peer1_id, vec![addr])].into_iter().collect(),
+            );
             let orig_cid = cid;
             loop {
                 match swarm2.next().await {
@@ -417,6 +436,7 @@ mod tests {
                         id,
                         result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
                     })) => {
+                        trace!("peer2: want res {}", cid);
                         assert_eq!(orig_id, id);
                         assert_eq!(sender, peer1_id);
                         assert_eq!(orig_cid, cid);
