@@ -5,6 +5,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::task::{Context, Poll};
 
+use ahash::AHashMap;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_metrics::bitswap::Metrics;
@@ -87,9 +88,25 @@ pub struct Bitswap {
     events: VecDeque<NetworkBehaviourAction<BitswapEvent, BitswapHandler>>,
     queries: QueryManager,
     sessions: SessionManager,
+    providers: AHashMap<Cid, Vec<Provider>>,
     #[allow(dead_code)]
     config: BitswapConfig,
     metrics: Metrics,
+}
+
+#[derive(Debug)]
+pub(crate) struct Provider {
+    pub id: PeerId,
+    pub addrs: Vec<Multiaddr>,
+}
+
+impl From<PeerId> for Provider {
+    fn from(id: PeerId) -> Self {
+        Provider {
+            id,
+            addrs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -104,6 +121,7 @@ impl Bitswap {
         Bitswap {
             config,
             sessions,
+            providers: Default::default(),
             metrics: Metrics::new(registry),
             ..Default::default()
         }
@@ -118,13 +136,17 @@ impl Bitswap {
         providers: HashMap<PeerId, Vec<Multiaddr>>,
     ) -> QueryId {
         debug!("want_block: {}", cid);
-        for (provider, addrs) in providers.iter() {
-            self.sessions.create_session(provider, addrs);
+        for (peer_id, addrs) in &providers {
+            self.sessions.create_session(peer_id, addrs);
         }
+        let providers: Vec<_> = providers
+            .into_iter()
+            .map(|(id, addrs)| Provider { id, addrs })
+            .collect();
 
         self.metrics.providers_total.inc_by(providers.len() as u64);
-        self.queries
-            .want(cid, priority, providers.into_iter().collect())
+        self.providers.insert(cid, providers);
+        self.queries.want(cid, priority)
     }
 
     #[instrument(skip(self, data))]
@@ -193,8 +215,8 @@ impl NetworkBehaviour for Bitswap {
         other_established: usize,
     ) {
         // TODO: track failed addresses
-        tracing::trace!("connected to {}", peer_id);
         if other_established == 0 {
+            // tracing::trace!("connected to {}", peer_id);
             self.sessions.new_connection(peer_id, &[][..]);
         }
     }
@@ -208,8 +230,8 @@ impl NetworkBehaviour for Bitswap {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         remaining_established: usize,
     ) {
-        tracing::trace!("connection closed to {}", peer_id);
         if remaining_established == 0 {
+            // tracing::trace!("connection closed to {}", peer_id);
             self.sessions.disconnected(peer_id);
             self.queries.disconnected(peer_id);
         }
@@ -222,11 +244,15 @@ impl NetworkBehaviour for Bitswap {
         _handler: Self::ConnectionHandler,
         _error: &DialError,
     ) {
-        tracing::trace!("dial failure to {:?}", peer_id);
+        // tracing::trace!("dial failure to {:?}", peer_id);
 
         if let Some(ref peer_id) = peer_id {
             self.sessions.dial_failure(peer_id);
             self.queries.dial_failure(peer_id);
+
+            for (_, providers) in &mut self.providers {
+                providers.retain(|p| &p.id != peer_id);
+            }
         }
     }
 
@@ -245,8 +271,7 @@ impl NetworkBehaviour for Bitswap {
                         .received_block_bytes
                         .inc_by(block.data().len() as u64);
 
-                    let (unused_providers, query_ids) =
-                        self.queries.process_block(&peer_id, &block);
+                    let query_ids = self.queries.process_block(&peer_id, &block);
                     for query_id in query_ids {
                         let event = BitswapEvent::OutboundQueryCompleted {
                             id: query_id,
@@ -259,9 +284,6 @@ impl NetworkBehaviour for Bitswap {
 
                         self.events
                             .push_back(NetworkBehaviourAction::GenerateEvent(event));
-                    }
-                    for provider in unused_providers {
-                        self.sessions.destroy_session(&provider);
                     }
                 }
 
@@ -308,7 +330,7 @@ impl NetworkBehaviour for Bitswap {
         }
 
         // process sessions & queries
-        if let Some(action) = self.sessions.poll(&mut self.queries) {
+        if let Some(action) = self.sessions.poll(&self.providers, &mut self.queries) {
             return Poll::Ready(action);
         }
 

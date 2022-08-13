@@ -4,6 +4,7 @@ use std::{
 };
 
 use ahash::AHashMap;
+use cid::Cid;
 use libp2p::{
     swarm::{
         dial_opts::{DialOpts, PeerCondition},
@@ -13,7 +14,11 @@ use libp2p::{
 };
 use tracing::trace;
 
-use crate::{behaviour::BitswapHandler, query::QueryManager, BitswapEvent};
+use crate::{
+    behaviour::{BitswapHandler, Provider},
+    query::QueryManager,
+    BitswapEvent,
+};
 
 #[derive(Default, Debug)]
 pub struct SessionManager {
@@ -44,7 +49,6 @@ impl Default for Config {
 #[derive(Debug)]
 pub struct Session {
     state: State,
-    addrs: Vec<Multiaddr>,
     query_count: usize,
 }
 
@@ -59,10 +63,8 @@ impl SessionManager {
     pub fn new_connection(&mut self, peer_id: &PeerId, addrs: &[Multiaddr]) {
         let session = self.sessions.entry(*peer_id).or_insert(Session {
             state: State::Connected,
-            addrs: Vec::new(),
             query_count: 0,
         });
-        session.addrs.extend_from_slice(addrs);
 
         match session.state {
             State::Dialing(_) | State::New => {
@@ -73,12 +75,14 @@ impl SessionManager {
     }
 
     pub fn disconnected(&mut self, peer_id: &PeerId) {
-        self.sessions.remove(peer_id);
+        if let Some(session) = self.sessions.get_mut(peer_id) {
+            session.state = State::Disconnected;
+        }
     }
 
     pub fn dial_failure(&mut self, peer_id: &PeerId) {
         if let Some(session) = self.sessions.get_mut(peer_id) {
-            session.state = State::Disconnected;
+            session.state = State::DialFailure;
         }
     }
 
@@ -90,10 +94,9 @@ impl SessionManager {
         );
         let session = self.sessions.entry(*peer_id).or_insert(Session {
             state: State::New,
-            addrs: Vec::new(),
             query_count: 0,
         });
-        session.addrs.extend_from_slice(addrs);
+
         session.query_count += 1;
     }
 
@@ -110,13 +113,14 @@ impl SessionManager {
         }
     }
 
-    pub fn poll(
+    pub(crate) fn poll(
         &mut self,
+        providers: &AHashMap<Cid, Vec<Provider>>,
         queries: &mut QueryManager,
     ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
         // cleanup disconnects
         self.sessions.retain(|_id, s| {
-            if matches!(s.state, State::Disconnected) {
+            if matches!(s.state, State::Disconnected | State::DialFailure) {
                 return false;
             }
 
@@ -127,7 +131,7 @@ impl SessionManager {
         let skip_dialing =
             self.current_dials() >= self.config.dial_concurrency_factor_providers.get() as _;
 
-        if let Some(ev) = queries.poll_all() {
+        if let Some(ev) = queries.poll_all(providers) {
             return Some(ev);
         }
 
@@ -138,13 +142,23 @@ impl SessionManager {
                         // no dialing this round
                         continue;
                     }
-                    tracing::debug!("dialing {} {:?}", peer_id, session.addrs);
+                    let addrs = providers
+                        .values()
+                        .flat_map(|providers| {
+                            providers
+                                .iter()
+                                .filter(|p| &p.id == peer_id)
+                                .flat_map(|p| &p.addrs)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    tracing::debug!("dialing {} {:?}", peer_id, addrs);
                     let handler = Default::default();
                     session.state = State::Dialing(Instant::now());
 
                     return Some(NetworkBehaviourAction::Dial {
                         opts: DialOpts::peer_id(*peer_id)
-                            .addresses(session.addrs.clone())
+                            .addresses(addrs)
                             .extend_addresses_through_behaviour()
                             .condition(PeerCondition::Disconnected)
                             .override_dial_concurrency_factor(
@@ -163,7 +177,7 @@ impl SessionManager {
                     }
                 }
                 State::Connected => {
-                    if let Some(event) = queries.poll_peer(peer_id) {
+                    if let Some(event) = queries.poll_peer(peer_id, providers) {
                         if let NetworkBehaviourAction::GenerateEvent(
                             BitswapEvent::OutboundQueryCompleted { .. },
                         ) = event
@@ -174,7 +188,7 @@ impl SessionManager {
                         return Some(event);
                     }
                 }
-                State::Disconnected => {}
+                State::Disconnected | State::DialFailure => {}
             }
         }
 
@@ -191,4 +205,5 @@ enum State {
     /// Connected
     Connected,
     Disconnected,
+    DialFailure,
 }
