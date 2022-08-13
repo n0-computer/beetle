@@ -10,19 +10,27 @@ message Message {
     }
 
     message Entry {
-      bytes block       = 1; // the block cid (cidV0 in bitswap 1.0.0, cidV1 in bitswap 1.1.0)
-      int32 priority    = 2; // the priority (normalized). default to 1
-      bool cancel       = 3; // whether this revokes an entry
-      WantType wantType = 4; // Note: defaults to enum 0, ie Block
-      bool sendDontHave = 5; // Note: defaults to false
+      // the block cid (cidV0 in bitswap 1.0.0, cidV1 in bitswap 1.1.0)
+      bytes block       = 1;
+      // the priority (normalized). default to 1
+      int32 priority    = 2;
+      // whether this revokes an entry
+      bool cancel       = 3;
+      // Note: defaults to enum 0, ie Block
+      WantType wantType = 4;
+      // Note: defaults to false
+      bool sendDontHave = 5;
     }
 
-    repeated Entry entries = 1;	// a list of wantlist entries
-    bool full              = 2; // whether this is the full wantlist. default to false
+    // a list of wantlist entries
+    repeated Entry entries = 1;
+    // whether this is the full wantlist. default to false
+    bool full              = 2;
   }
 
   message Block {
-    bytes prefix = 1; // CID prefix (cid version, multicodec and multihash prefix (type + length)
+    // CID prefix (cid version, multicodec and multihash prefix (type + length)
+    bytes prefix = 1;
     bytes data   = 2;
   }
 
@@ -37,8 +45,10 @@ message Message {
   }
 
   Wantlist wantlist                     = 1;
-  repeated bytes blocks                 = 2; // used to send Blocks in bitswap 1.0.0
-  repeated Block payload                = 3; // used to send Blocks in bitswap 1.1.0
+  // used to send Blocks in bitswap 1.0.0
+  repeated bytes blocks                 = 2;
+  // used to send Blocks in bitswap 1.1.0
+  repeated Block payload                = 3;
   repeated BlockPresence blockPresences = 4;
   int32 pendingBytes                    = 5;
 }
