@@ -20,6 +20,7 @@ use libp2p::{Multiaddr, PeerId};
 
 mod block;
 mod collections;
+mod handler;
 
 pub struct Bitswap {
     address_book: AddressBook,
