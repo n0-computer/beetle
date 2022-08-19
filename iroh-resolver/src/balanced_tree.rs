@@ -37,7 +37,7 @@ impl std::fmt::Display for UnixfsNode {
 pub fn build_stream(
     in_stream: impl Stream<Item = usize>,
 ) -> impl Stream<Item = Result<UnixfsNode>> {
-    const NUM_CHILDREN: usize = 3;
+    const MAX_DEGREES: usize = 3;
     try_stream! {
         // vec![ vec![] ]
         // ..
@@ -64,48 +64,43 @@ pub fn build_stream(
         // vec![ vec![pp0], vec![p8], vec![8] ]
 
         let mut tree: VecDeque<Vec<usize>> = VecDeque::new();
-        tree.push_back(Vec::with_capacity(NUM_CHILDREN));
+        tree.push_back(Vec::with_capacity(MAX_DEGREES));
 
         tokio::pin!(in_stream);
 
         while let Some(chunk) = in_stream.next().await {
-            let mut index = tree.len() - 1;
-            let mut next_nodes = vec![];
-            loop {
-                if tree[index].len() == NUM_CHILDREN {
-                    let links = std::mem::replace(&mut tree[index], Vec::new());
-                   let root_node = UnixfsNode::File(links);
-                   next_nodes.push(root_node);
-
-                   if index == 0 {
-                        tree.push_front(vec![]);
-                   } else {
-                        index -= 1;
-                   }
-                } else {
-                    if next_nodes.is_empty() {
+            let tree_len = tree.len();
+            if tree[0].len() == MAX_DEGREES {
+                for i in 0..tree_len {
+                    if tree[i].len() < MAX_DEGREES {
                         break;
                     }
-                    let next_node = next_nodes.pop().unwrap();
-                    tree[index].push(next_node.cid());
-                    yield next_node;
+
+                    if i == tree_len - 1 {
+                        tree.push_back(vec![]);
+                    }
+
+                    let links = std::mem::replace(&mut tree[i], Vec::new());
+                    let node = UnixfsNode::File(links);
+                    let cid = node.cid();
+                    yield node;
+
+                    tree[i+1].push(cid);
                 }
             }
-
-            index = tree.len() - 1;
             let raw = UnixfsNode::Raw(chunk);
-            tree[index].push(raw.cid());
+            tree[0].push(raw.cid());
             yield raw;
         }
 
         // yield not filled subtrees
-        while let Some(links) = tree.pop_back() {
+        while let Some(links) = tree.pop_front() {
             let node = UnixfsNode::File(links);
             let cid = node.cid();
             yield node;
 
-            if let Some(last) = tree.back_mut() {
-                last.push(cid);
+            if let Some(front) = tree.front_mut() {
+                front.push(cid);
             } else {
                 // final root, nothing to do
             }
