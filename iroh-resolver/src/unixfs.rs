@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
-use cid::Cid;
+use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use prost::Message;
 use tokio::io::AsyncRead;
@@ -116,12 +116,17 @@ pub enum HamtHashFunction {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+// Node is a convenient representation of a node in the tree
+// the "outer" PbNode actually contains a reference to the "inner" unixfs_pb::Data
+// but is represented as "flat" here
 pub struct Node {
     pub(super) outer: dag_pb::PbNode,
     pub(super) inner: unixfs_pb::Data,
 }
 
 impl Node {
+    // encode the "outer" PbNode, which actually contains a reference to the "inner" unixfs_pb data
+    // node
     fn encode(&self) -> Result<Bytes> {
         let bytes = self.outer.encode_to_vec();
         Ok(bytes.into())
@@ -227,6 +232,14 @@ impl UnixfsNode {
         );
 
         Ok(out)
+    }
+
+    pub fn calculate_cid(&self) -> Result<Cid> {
+        let bytes = self.encode()?;
+        Ok(Cid::new_v1(
+            Codec::DagPb as _,
+            cid::multihash::Code::Sha2_256.digest(&bytes),
+        ))
     }
 
     pub const fn typ(&self) -> Option<DataType> {

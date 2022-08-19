@@ -235,6 +235,32 @@ impl File {
     }
 }
 
+// fn create_link_node(cids: Vec<(Cid, usize)>) -> Result<UnixfsNode> {
+//     let links = cids
+//         .into_iter()
+//         .map(|(cid, len)| dag_pb::PbLink {
+//             hash: Some(cid.to_bytes()),
+//             name: Some("".into()),
+//             tsize: Some(len as u64),
+//         })
+//         .collect();
+
+//     // PBNode.Data
+//     let data = unixfs_pb::Data {
+//         r#type: DataType::File as i32,
+//         ..Default::default()
+//     };
+
+//     // create PBNode
+//     let pb_node = encode_unixfs_pb(&data, links)?;
+
+//     // create UnixfsNode
+//     Ok(UnixfsNode::File(Node {
+//         inner: data,
+//         outer: pb_node,
+//     }))
+// }
+
 fn encode_unixfs_pb(inner: &unixfs_pb::Data, links: Vec<dag_pb::PbLink>) -> Result<dag_pb::PbNode> {
     let data = inner.encode_to_vec();
     ensure!(
@@ -259,6 +285,7 @@ impl Default for FileBuilder {
     }
 }
 
+// FileBuilder separates uses a reader or bytes to chunk the data into raw unixfs nodes
 impl FileBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -300,6 +327,8 @@ impl FileBuilder {
         })
     }
 }
+
+// fn build_tree(
 
 #[async_trait]
 pub trait Store {
