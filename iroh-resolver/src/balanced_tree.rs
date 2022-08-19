@@ -42,26 +42,18 @@ pub fn build_stream(
         // vec![ vec![] ]
         // ..
         // vec![ vec![0, 1, 2, 3, 4, 5, 6, 7] ]
-        //   vec![ vec![], vec![] ]  ( [8, p0] , index = 0)
-        //   vec![ vec![p0], vec![] ]  ( [8] , index = 1)
-        // vec![ vec![p0], vec![8] ]
+        // vec![ vec![8], vec![p0] ]
 
         // ...
 
-        // vec![ vec![p0] vec![0, 1, 2, 3, 4, 5, 6, 7] ]
-        // vec![ vec![p0, p1], vec![]]
+        // vec![ vec![0, 1, 2, 3, 4, 5, 6, 7] vec![p0] ]
+        // vec![ vec![], vec![p0, p1]]
 
         // ..
 
-        // vec![ vec![p0, p1, p2, p3, p4, p5, p6, p7], [0, 1, 2, 3, 4, 5, 6, 7] ]
-        //       ([8] index = 1)
-        // vec![ vec![p0, p1, p2, p3, p4, p5, p6, p7], vec![] ] ([8, p8], index = 0)
-        //
-        // vec![ vec![], vec![], vec![] ] ([8, p8, pp0], index = 0)
-        //
-        // vec![ vec![pp0], vec![], vec![] ] ([8, p8], index = 0)
-        //
-        // vec![ vec![pp0], vec![p8], vec![8] ]
+        // vec![ vec![0, 1, 2, 3, 4, 5, 6, 7] vec![p0, p1, p2, p3, p4, p5, p6, p7], ]
+        // vec![ vec![], vec![p0, p1, p2, p3, p4, p5, p6, p7], vec![] ]
+        // vec![ vec![8], vec![p8], vec![pp0] ]
 
         let mut tree: VecDeque<Vec<usize>> = VecDeque::new();
         tree.push_back(Vec::with_capacity(MAX_DEGREES));
@@ -70,24 +62,35 @@ pub fn build_stream(
 
         while let Some(chunk) = in_stream.next().await {
             let tree_len = tree.len();
+
+            // check if the leaf node of the tree is full
             if tree[0].len() == MAX_DEGREES {
+                // if so, iterater through nodes
                 for i in 0..tree_len {
+                    // if we encounter any nodes that are not full, break
                     if tree[i].len() < MAX_DEGREES {
                         break;
                     }
 
+                    // in this case we have a full set of links & we are
+                    // at the top of the tree. Time to make a new layer.
                     if i == tree_len - 1 {
                         tree.push_back(vec![]);
                     }
 
+                    // create node, keeping the cid
                     let links = std::mem::replace(&mut tree[i], Vec::new());
                     let node = UnixfsNode::File(links);
                     let cid = node.cid();
                     yield node;
 
+                    // add cid to parent node
                     tree[i+1].push(cid);
                 }
             }
+
+            // now that we know the tree is in a "healthy" state to
+            // recieve more links, add the link to the tree
             let raw = UnixfsNode::Raw(chunk);
             tree[0].push(raw.cid());
             yield raw;
