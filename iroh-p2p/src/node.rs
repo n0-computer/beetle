@@ -816,16 +816,18 @@ mod tests {
         p2p::{P2pClientAddr, P2pServerAddr},
         Addr,
     };
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     #[cfg(feature = "rpc-grpc")]
     #[tokio::test]
-    async fn test_fetch_providers_grpc() -> Result<()> {
+    async fn test_fetch_providers_grpc_dht() -> Result<()> {
         let server_addr = "grpc://0.0.0.0:4401".parse().unwrap();
         let client_addr = "grpc://0.0.0.0:4401".parse().unwrap();
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5001".parse().unwrap(),
             server_addr,
             client_addr,
+            true,
         )
         .await?;
         Ok(())
@@ -833,7 +835,7 @@ mod tests {
 
     #[cfg(all(feature = "rpc-grpc", unix))]
     #[tokio::test]
-    async fn test_fetch_providers_uds() -> Result<()> {
+    async fn test_fetch_providers_uds_dht() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("cool.iroh");
 
@@ -843,6 +845,7 @@ mod tests {
             "/ip4/0.0.0.0/tcp/5002".parse().unwrap(),
             server_addr,
             client_addr,
+            true,
         )
         .await?;
         Ok(())
@@ -850,12 +853,32 @@ mod tests {
 
     #[cfg(feature = "rpc-mem")]
     #[tokio::test]
-    async fn test_fetch_providers_mem() -> Result<()> {
+    async fn test_fetch_providers_mem_dht() -> Result<()> {
         let (server_addr, client_addr) = Addr::new_mem();
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5003".parse().unwrap(),
             server_addr,
             client_addr,
+            true,
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "rpc-mem")]
+    #[tokio::test]
+    async fn test_fetch_providers_mem_bitswap() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
+        let (server_addr, client_addr) = Addr::new_mem();
+        fetch_providers(
+            "/ip4/0.0.0.0/tcp/5004".parse().unwrap(),
+            server_addr,
+            client_addr,
+            false,
         )
         .await?;
         Ok(())
@@ -865,6 +888,7 @@ mod tests {
         addr: Multiaddr,
         rpc_server_addr: P2pServerAddr,
         rpc_client_addr: P2pClientAddr,
+        dht: bool,
     ) -> Result<()> {
         let mut prom_registry = Registry::default();
         let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
@@ -886,10 +910,21 @@ mod tests {
             let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
                 .parse()
                 .unwrap();
-            let providers = client.p2p.unwrap().fetch_providers_dht(&c).await?;
-            assert!(!providers.is_empty());
-            assert!(providers.len() >= PROVIDER_LIMIT);
-        }
+            if dht {
+                let providers = client.p2p.unwrap().fetch_providers_dht(&c).await?;
+                assert!(!providers.is_empty());
+                assert!(providers.len() >= PROVIDER_LIMIT);
+            } else {
+                // force to connect to providers, so we have a chance
+                let providers = client.p2p.clone().unwrap().fetch_providers_dht(&c).await?;
+                assert!(!providers.is_empty());
+                println!("found providers dht: {:?}", providers);
+
+                let providers = client.p2p.unwrap().fetch_providers_bitswap(&c).await?;
+                assert!(!providers.is_empty());
+                println!("found providers bitswap: {:?}", providers);
+            }
+        };
 
         p2p_task.abort();
         Ok(())
