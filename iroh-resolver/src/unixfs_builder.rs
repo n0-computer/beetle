@@ -2,7 +2,7 @@ use std::{fmt::Debug, path::Path, pin::Pin};
 
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{Stream, StreamExt};
 use iroh_rpc_client::Client;
@@ -10,6 +10,7 @@ use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
+    balanced_tree::stream_balanced_tree,
     chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
     codecs::Codec,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
@@ -99,9 +100,7 @@ impl Directory {
             let outer = encode_unixfs_pb(&inner, links)?;
 
             let node = UnixfsNode::Directory(Node { outer, inner });
-            let bytes = node.encode()?;
-            let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
-            yield (cid, bytes)
+            yield node.encode()?;
         }
     }
 }
@@ -132,7 +131,7 @@ impl Debug for FileBuilder {
 /// Representation of a constructed File.
 pub struct File {
     name: String,
-    nodes: Pin<Box<dyn Stream<Item = Result<UnixfsNode>>>>,
+    nodes: Pin<Box<dyn Stream<Item = std::io::Result<BytesMut>>>>,
 }
 
 impl Debug for File {
@@ -198,70 +197,16 @@ impl File {
     }
 
     pub fn encode(self) -> impl Stream<Item = Result<(Cid, Bytes)>> {
-        async_stream::try_stream! {
-            let mut cids = Vec::new();
-            let nodes = self.nodes;
-            tokio::pin!(nodes);
-
-            while let Some(node) = nodes.next().await {
-                let node = node?;
-                let bytes = node.encode()?;
-                let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&bytes));
-                cids.push((cid, bytes.len()));
-                yield (cid, bytes);
-            }
-
-            if cids.len() > 1  {
-                // yield root as last element, as we now have all links
-                let links = cids.into_iter().map(|(cid, len)| {
-                    dag_pb::PbLink {
-                        hash: Some(cid.to_bytes()),
-                        name: Some("".into()),
-                        tsize: Some(len as u64),
-                    }
-                }).collect();
-
-                let inner = unixfs_pb::Data {
-                    r#type: DataType::File as i32,
-                    ..Default::default()
-                };
-                let outer = encode_unixfs_pb(&inner, links)?;
-                let node = UnixfsNode::Directory(Node { outer, inner });
-                let bytes = node.encode()?;
-                let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
-                yield (cid, bytes)
-            }
-        }
+        // "The default max width is 174": https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout
+        const MAX_DEGREES: usize = 174;
+        stream_balanced_tree(self.nodes, MAX_DEGREES)
     }
 }
 
-// fn create_link_node(cids: Vec<(Cid, usize)>) -> Result<UnixfsNode> {
-//     let links = cids
-//         .into_iter()
-//         .map(|(cid, len)| dag_pb::PbLink {
-//             hash: Some(cid.to_bytes()),
-//             name: Some("".into()),
-//             tsize: Some(len as u64),
-//         })
-//         .collect();
-
-//     // PBNode.Data
-//     let data = unixfs_pb::Data {
-//         r#type: DataType::File as i32,
-//         ..Default::default()
-//     };
-
-//     // create PBNode
-//     let pb_node = encode_unixfs_pb(&data, links)?;
-
-//     // create UnixfsNode
-//     Ok(UnixfsNode::File(Node {
-//         inner: data,
-//         outer: pb_node,
-//     }))
-// }
-
-fn encode_unixfs_pb(inner: &unixfs_pb::Data, links: Vec<dag_pb::PbLink>) -> Result<dag_pb::PbNode> {
+pub(crate) fn encode_unixfs_pb(
+    inner: &unixfs_pb::Data,
+    links: Vec<dag_pb::PbLink>,
+) -> Result<dag_pb::PbNode> {
     let data = inner.encode_to_vec();
     ensure!(
         data.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
@@ -313,17 +258,9 @@ impl FileBuilder {
         let name = self.name.ok_or_else(|| anyhow!("missing name"))?;
         let reader = self.content.ok_or_else(|| anyhow!("missing content"))?;
 
-        let nodes = self.chunker.chunks(reader).map(|chunk| match chunk {
-            Ok(chunk) => {
-                let data = chunk.freeze();
-                Ok(UnixfsNode::Raw(data))
-            }
-            Err(err) => Err(err.into()),
-        });
-
         Ok(File {
             name,
-            nodes: Box::pin(nodes),
+            nodes: Box::pin(self.chunker.chunks(reader)),
         })
     }
 }

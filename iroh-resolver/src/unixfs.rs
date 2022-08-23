@@ -116,17 +116,12 @@ pub enum HamtHashFunction {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-// Node is a convenient representation of a node in the tree
-// the "outer" PbNode actually contains a reference to the "inner" unixfs_pb::Data
-// but is represented as "flat" here
 pub struct Node {
     pub(super) outer: dag_pb::PbNode,
     pub(super) inner: unixfs_pb::Data,
 }
 
 impl Node {
-    // encode the "outer" PbNode, which actually contains a reference to the "inner" unixfs_pb data
-    // node
     fn encode(&self) -> Result<Bytes> {
         let bytes = self.outer.encode_to_vec();
         Ok(bytes.into())
@@ -215,14 +210,25 @@ impl UnixfsNode {
         }
     }
 
-    pub fn encode(&self) -> Result<Bytes> {
-        let out = match self {
-            UnixfsNode::Raw(data) => data.clone(),
+    pub fn encode(&self) -> Result<(Cid, Bytes)> {
+        let (cid, out) = match self {
+            UnixfsNode::Raw(data) => {
+                let out = data.clone();
+                let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&out));
+                (cid, out)
+            }
             UnixfsNode::RawNode(node)
             | UnixfsNode::Directory(node)
             | UnixfsNode::File(node)
             | UnixfsNode::Symlink(node)
-            | UnixfsNode::HamtShard(node, _) => node.encode()?,
+            | UnixfsNode::HamtShard(node, _) => {
+                let out = node.encode()?;
+                let cid = Cid::new_v1(
+                    Codec::DagPb as _,
+                    cid::multihash::Code::Sha2_256.digest(&out),
+                );
+                (cid, out)
+            }
         };
 
         ensure!(
@@ -231,15 +237,7 @@ impl UnixfsNode {
             out.len()
         );
 
-        Ok(out)
-    }
-
-    pub fn calculate_cid(&self) -> Result<Cid> {
-        let bytes = self.encode()?;
-        Ok(Cid::new_v1(
-            Codec::DagPb as _,
-            cid::multihash::Code::Sha2_256.digest(&bytes),
-        ))
+        Ok((cid, out))
     }
 
     pub const fn typ(&self) -> Option<DataType> {
@@ -401,7 +399,7 @@ pub enum UnixfsContentReader<T: ContentLoader> {
 }
 
 impl<T: ContentLoader> UnixfsContentReader<T> {
-    /// Returrns the size in bytes, if known in advance.
+    /// Returns the size in bytes, if known in advance.
     pub fn size(&self) -> Option<u64> {
         match self {
             UnixfsContentReader::File { root_node, .. } => {
