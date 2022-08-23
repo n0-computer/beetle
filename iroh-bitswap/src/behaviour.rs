@@ -414,16 +414,20 @@ impl NetworkBehaviour for Bitswap {
         _: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
-        if let Some(event) = self.events.pop_front() {
-            return Poll::Ready(event);
-        }
+        loop {
+            if let Some(event) = self.events.pop_front() {
+                return Poll::Ready(event);
+            }
 
-        // process sessions & queries
-        if let Some(action) = self.sessions.poll(&mut self.queries) {
-            return Poll::Ready(action);
-        }
+            // process sessions & queries
+            if let Some(action) = self.sessions.poll(&mut self.queries) {
+                return Poll::Ready(action);
+            }
 
-        Poll::Pending
+            if self.events.is_empty() {
+                return Poll::Pending;
+            }
+        }
     }
 }
 

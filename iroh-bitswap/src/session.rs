@@ -113,57 +113,12 @@ impl SessionManager {
             true
         });
 
-        if let Some(ev) = queries.poll_all() {
-            return Some(ev);
-        }
-
         // limit parallel dials
         let skip_dialing =
             self.current_dials() >= self.config.dial_concurrency_factor_providers.get() as _;
 
-        for (peer_id, session) in self.sessions.iter_mut() {
-            match session.state {
-                State::New => {
-                    if skip_dialing {
-                        // no dialing this round
-                        continue;
-                    }
-                    trace!("dialing {}", peer_id);
-                    let handler = Default::default();
-                    session.state = State::Dialing(Instant::now());
-
-                    return Some(NetworkBehaviourAction::Dial {
-                        opts: DialOpts::peer_id(*peer_id)
-                            .condition(PeerCondition::Always)
-                            .override_dial_concurrency_factor(
-                                self.config.dial_concurrency_factor_peer,
-                            )
-                            .build(),
-                        handler,
-                    });
-                }
-                State::Dialing(start) => {
-                    // check for dial timeouts
-                    if start.elapsed() >= self.config.dial_timeout {
-                        trace!("dialing {}: timed out", peer_id);
-                        queries.disconnected(peer_id);
-                        session.state = State::Disconnected;
-                    }
-                }
-                State::Connected => {
-                    if let Some(event) = queries.poll_peer(peer_id) {
-                        if let NetworkBehaviourAction::GenerateEvent(
-                            BitswapEvent::OutboundQueryCompleted { .. },
-                        ) = event
-                        {
-                            session.query_count -= 1;
-                        }
-
-                        return Some(event);
-                    }
-                }
-                State::Disconnected => {}
-            }
+        if let Some(ev) = queries.poll_all(&self) {
+            return Some(ev);
         }
 
         None

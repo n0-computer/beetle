@@ -10,6 +10,7 @@ use tracing::{error, trace};
 use crate::{
     behaviour::{BitswapHandler, FindProvidersResult, QueryError, SendHaveResult},
     message::BlockPresence,
+    session::SessionManager,
     BitswapEvent, BitswapMessage, Block, CancelResult, Priority, QueryResult, SendResult,
     WantResult,
 };
@@ -271,95 +272,36 @@ impl QueryManager {
         self.disconnected(peer_id);
     }
 
-    fn next_finished_query(&mut self) -> Option<(QueryId, Query)> {
-        let mut next_query = None;
-        for (query_id, query) in &self.queries {
-            match query {
-                Query::Want {
-                    providers, state, ..
-                } => {
-                    if providers.is_empty() {
-                        if let State::Sent(used_providers) = state {
-                            if used_providers.is_empty() {
-                                next_query = Some(query_id);
-                                break;
-                            }
-                        }
-                    }
-                }
-                Query::FindProviders { state, peers, .. } => {
-                    if peers.is_empty() {
-                        if let State::Sent(used_providers) = state {
-                            if used_providers.is_empty() {
-                                next_query = Some(query_id);
-                                break;
-                            }
-                        }
-                    }
-                }
-                Query::Send { state, .. } => {
-                    if let State::Sent(providers) = state {
-                        if providers.is_empty() {
-                            next_query = Some(query_id);
-                            break;
-                        }
-                    }
-                }
-                Query::SendHave { state, .. } => {
-                    if let State::Sent(providers) = state {
-                        if providers.is_empty() {
-                            next_query = Some(query_id);
-                            break;
-                        }
-                    }
-                }
-                Query::Cancel {
-                    providers, state, ..
-                } => {
-                    if providers.is_empty() {
-                        if let State::Sent(used_providers) = state {
-                            if used_providers.is_empty() {
-                                next_query = Some(query_id);
-                                break;
-                            }
-                        }
-                    }
-                }
+    pub fn poll_all(
+        &mut self,
+        sessions: &SessionManager,
+    ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
+        let mut finished_queries = Vec::new();
+        let mut event = None;
+        let mut msg = BitswapMessage::default();
+
+        for (query_id, query) in &mut self.queries {
+            // Is this query finished?
+            if let Some(result) = query.try_finish() {
+                finished_queries.push(*query_id);
+
+                event = Some(NetworkBehaviourAction::GenerateEvent(
+                    BitswapEvent::OutboundQueryCompleted {
+                        id: *query_id,
+                        result,
+                    },
+                ));
             }
+
+            // not finished, process the next provider
         }
 
-        if let Some(id) = next_query {
-            let id = *id;
-            return Some((id, self.queries.remove(&id).unwrap()));
+        // cleanup
+        for id in &finished_queries {
+            self.queries.remove(id);
         }
 
-        None
-    }
-
-    pub fn poll_all(&mut self) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
-        self.next_finished_query()
-            .map(|(id, query)| match query {
-                Query::Send { .. } => (id, QueryResult::Send(SendResult::Err(QueryError::Timeout))),
-                Query::SendHave { .. } => (
-                    id,
-                    QueryResult::SendHave(SendHaveResult::Err(QueryError::Timeout)),
-                ),
-                Query::FindProviders { .. } => (
-                    id,
-                    QueryResult::FindProviders(FindProvidersResult::Err(QueryError::Timeout)),
-                ),
-                Query::Want { .. } => (id, QueryResult::Want(WantResult::Err(QueryError::Timeout))),
-                Query::Cancel { .. } => (
-                    id,
-                    QueryResult::Cancel(CancelResult::Err(QueryError::Timeout)),
-                ),
-            })
-            .map(|(id, result)| {
-                NetworkBehaviourAction::GenerateEvent(BitswapEvent::OutboundQueryCompleted {
-                    id,
-                    result,
-                })
-            })
+        event
     }
 
     pub fn poll_peer(
@@ -602,6 +544,64 @@ impl Query {
                 false
             }
         }
+    }
+
+    fn try_finish(&self) -> Option<QueryResult> {
+        match self {
+            Query::Want {
+                providers, state, ..
+            } => {
+                if providers.is_empty() {
+                    if let State::Sent(used_providers) = state {
+                        if used_providers.is_empty() {
+                            return Some(QueryResult::Want(WantResult::Err(QueryError::Timeout)));
+                        }
+                    }
+                }
+            }
+            Query::FindProviders { state, peers, .. } => {
+                if peers.is_empty() {
+                    if let State::Sent(used_providers) = state {
+                        if used_providers.is_empty() {
+                            return Some(QueryResult::FindProviders(FindProvidersResult::Err(
+                                QueryError::Timeout,
+                            )));
+                        }
+                    }
+                }
+            }
+            Query::Send { state, .. } => {
+                if let State::Sent(providers) = state {
+                    if providers.is_empty() {
+                        return Some(QueryResult::Send(SendResult::Err(QueryError::Timeout)));
+                    }
+                }
+            }
+            Query::SendHave { state, .. } => {
+                if let State::Sent(providers) = state {
+                    if providers.is_empty() {
+                        return Some(QueryResult::SendHave(SendHaveResult::Err(
+                            QueryError::Timeout,
+                        )));
+                    }
+                }
+            }
+            Query::Cancel {
+                providers, state, ..
+            } => {
+                if providers.is_empty() {
+                    if let State::Sent(used_providers) = state {
+                        if used_providers.is_empty() {
+                            return Some(QueryResult::Cancel(CancelResult::Err(
+                                QueryError::Timeout,
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 
