@@ -265,8 +265,6 @@ impl FileBuilder {
     }
 }
 
-// fn build_tree(
-
 #[async_trait]
 pub trait Store {
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
