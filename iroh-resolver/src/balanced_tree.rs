@@ -9,12 +9,41 @@ use futures::{Stream, StreamExt};
 use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
 use crate::unixfs_builder::encode_unixfs_pb;
 
+/// Default degree number for balanced tree, taken from unixfs specs
+/// https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout
+pub const DEFAULT_DEGREE: usize = 174;
+
+pub enum TreeBuilder {
+    // TreeBuilder that builds a "balanced tree" with a max degree size of
+    // degree
+    Balanced { degree: usize },
+}
+
+impl TreeBuilder {
+    pub fn balanced_tree() -> Self {
+        Self::balanced_tree_with_degree(DEFAULT_DEGREE)
+    }
+
+    pub fn balanced_tree_with_degree(degree: usize) -> Self {
+        TreeBuilder::Balanced { degree }
+    }
+
+    pub fn stream_tree(
+        &self,
+        chunks: impl Stream<Item = std::io::Result<BytesMut>>,
+    ) -> impl Stream<Item = Result<(Cid, Bytes)>> {
+        match self {
+            TreeBuilder::Balanced { degree } => stream_balanced_tree(chunks, *degree),
+        }
+    }
+}
+
 pub fn stream_balanced_tree(
     in_stream: impl Stream<Item = std::io::Result<BytesMut>>,
-    max_degrees: usize,
+    degree: usize,
 ) -> impl Stream<Item = Result<(Cid, Bytes)>> {
     try_stream! {
-        // max_degrees = 8
+        // degree = 8
         // VecDeque![ vec![] ]
         // ..
         // VecDeque![ vec![0, 1, 2, 3, 4, 5, 6, 7] ]
@@ -35,9 +64,9 @@ pub fn stream_balanced_tree(
         // and the last vec representing the root node
         // Since we emit leaf and stem nodes as we go, we only need to keep track of the
         // most "recent" branch, storing the links to that node's children & yielding them
-        // when each node reaches `max_degrees` number of links
+        // when each node reaches `degree` number of links
         let mut tree: VecDeque<Vec<(Cid, u64)>> = VecDeque::new();
-        tree.push_back(Vec::with_capacity(max_degrees));
+        tree.push_back(Vec::with_capacity(degree));
 
         tokio::pin!(in_stream);
 
@@ -47,11 +76,11 @@ pub fn stream_balanced_tree(
             let tree_len = tree.len();
 
             // check if the leaf node of the tree is full
-            if tree[0].len() == max_degrees {
+            if tree[0].len() == degree {
                 // if so, iterate through nodes
                 for i in 0..tree_len {
                     // if we encounter any nodes that are not full, break
-                    if tree[i].len() < max_degrees {
+                    if tree[i].len() < degree {
                         break;
                     }
 
@@ -71,7 +100,7 @@ pub fn stream_balanced_tree(
                 }
                 // at this point the tree will be able to recieve new links
                 // without "overflowing", aka the leaf node and stem nodes
-                // have fewer than max_degrees number of links
+                // have fewer than `degree` number of links
             }
 
             // now that we know the tree is in a "healthy" state to
@@ -79,7 +108,7 @@ pub fn stream_balanced_tree(
             let (cid, bytes, len) = TreeNode::Leaf(chunk).encode()?;
             tree[0].push((cid, len));
             yield (cid, bytes);
-            // at this point, the leaf node may have max_degrees number of
+            // at this point, the leaf node may have `degree` number of
             // links, but no other stem node will
         }
 
@@ -165,12 +194,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     fn test_chunk_stream(num_chunks: usize) -> impl Stream<Item = std::io::Result<BytesMut>> {
-        async_stream::try_stream! {
-            for n in 0..num_chunks {
-                let bytes = BytesMut::from(&n.to_be_bytes()[..]);
-                yield bytes
-            }
-        }
+        futures::stream::iter((0..num_chunks).map(|n| Ok(BytesMut::from(&n.to_be_bytes()[..]))))
     }
 
     async fn build_expect_tree(num_chunks: usize, degree: usize) -> Vec<Vec<(Cid, Bytes)>> {
@@ -212,9 +236,11 @@ mod tests {
         tree
     }
 
-    async fn build_expect(num_chunks: usize, degree: usize) -> Vec<(Cid, Bytes)> {
-        let tree = build_expect_tree(num_chunks, degree).await;
-        println!("{:?}", tree);
+    async fn build_expect_vec_from_tree(
+        tree: Vec<Vec<(Cid, Bytes)>>,
+        num_chunks: usize,
+        degree: usize,
+    ) -> Vec<(Cid, Bytes)> {
         let mut out = vec![];
 
         if num_chunks == 1 {
@@ -254,6 +280,79 @@ mod tests {
         }
 
         out
+    }
+
+    async fn build_expect(num_chunks: usize, degree: usize) -> Vec<(Cid, Bytes)> {
+        let tree = build_expect_tree(num_chunks, degree).await;
+        println!("{:?}", tree);
+        build_expect_vec_from_tree(tree, num_chunks, degree).await
+    }
+
+    fn make_leaf(data: usize) -> (Cid, Bytes, u64) {
+        TreeNode::Leaf(BytesMut::from(&data.to_be_bytes()[..]).freeze())
+            .encode()
+            .unwrap()
+    }
+
+    fn make_stem(links: Vec<(Cid, u64)>) -> (Cid, Bytes, u64) {
+        TreeNode::Stem(links).encode().unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_build_expect() {
+        // manually build tree made of 7 chunks (11 total nodes)
+        let (cid_0, bytes_0, len_0) = make_leaf(0);
+        let (cid_1, bytes_1, len_1) = make_leaf(1);
+        let (cid_2, bytes_2, len_2) = make_leaf(2);
+        let (stem_cid_0, stem_bytes_0, stem_len_0) =
+            make_stem(vec![(cid_0, len_0), (cid_1, len_1), (cid_2, len_2)]);
+        let (cid_3, bytes_3, len_3) = make_leaf(3);
+        let (cid_4, bytes_4, len_4) = make_leaf(4);
+        let (cid_5, bytes_5, len_5) = make_leaf(5);
+        let (stem_cid_1, stem_bytes_1, stem_len_1) =
+            make_stem(vec![(cid_3, len_3), (cid_4, len_4), (cid_5, len_5)]);
+        let (cid_6, bytes_6, len_6) = make_leaf(6);
+        let (stem_cid_2, stem_bytes_2, stem_len_2) = make_stem(vec![(cid_6, len_6)]);
+        let (root_cid, root_bytes, _root_len) = make_stem(vec![
+            (stem_cid_0, stem_len_0),
+            (stem_cid_1, stem_len_1),
+            (stem_cid_2, stem_len_2),
+        ]);
+        let leaf_0 = (cid_0, bytes_0);
+        let leaf_1 = (cid_1, bytes_1);
+        let leaf_2 = (cid_2, bytes_2);
+        let leaf_3 = (cid_3, bytes_3);
+        let leaf_4 = (cid_4, bytes_4);
+        let leaf_5 = (cid_5, bytes_5);
+        let leaf_6 = (cid_6, bytes_6);
+
+        let stem_0 = (stem_cid_0, stem_bytes_0);
+        let stem_1 = (stem_cid_1, stem_bytes_1);
+        let stem_2 = (stem_cid_2, stem_bytes_2);
+
+        let root = (root_cid, root_bytes);
+
+        let expect_tree = vec![
+            vec![
+                leaf_0.clone(),
+                leaf_1.clone(),
+                leaf_2.clone(),
+                leaf_3.clone(),
+                leaf_4.clone(),
+                leaf_5.clone(),
+                leaf_6.clone(),
+            ],
+            vec![stem_0.clone(), stem_1.clone(), stem_2.clone()],
+            vec![root.clone()],
+        ];
+        let got_tree = build_expect_tree(7, 3).await;
+        assert_eq!(expect_tree, got_tree);
+
+        let expect_vec = vec![
+            leaf_0, leaf_1, leaf_2, stem_0, leaf_3, leaf_4, leaf_5, stem_1, leaf_6, stem_2, root,
+        ];
+        let got_vec = build_expect_vec_from_tree(got_tree, 7, 3).await;
+        assert_eq!(expect_vec, got_vec);
     }
 
     async fn ensure_equal(

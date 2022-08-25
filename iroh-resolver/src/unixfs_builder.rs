@@ -10,7 +10,7 @@ use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
-    balanced_tree::stream_balanced_tree,
+    balanced_tree::TreeBuilder,
     chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
     codecs::Codec,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
@@ -197,9 +197,7 @@ impl File {
     }
 
     pub fn encode(self) -> impl Stream<Item = Result<(Cid, Bytes)>> {
-        // "The default max width is 174": https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout
-        const MAX_DEGREES: usize = 174;
-        stream_balanced_tree(self.nodes, MAX_DEGREES)
+        TreeBuilder::balanced_tree().stream_tree(self.nodes)
     }
 }
 
