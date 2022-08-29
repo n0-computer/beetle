@@ -132,6 +132,7 @@ impl Debug for FileBuilder {
 pub struct File {
     name: String,
     nodes: Pin<Box<dyn Stream<Item = std::io::Result<BytesMut>>>>,
+    tree_builder: TreeBuilder,
 }
 
 impl Debug for File {
@@ -197,7 +198,7 @@ impl File {
     }
 
     pub fn encode(self) -> impl Stream<Item = Result<(Cid, Bytes)>> {
-        TreeBuilder::balanced_tree().stream_tree(self.nodes)
+        self.tree_builder.stream_tree(self.nodes)
     }
 }
 
@@ -228,7 +229,7 @@ impl Default for FileBuilder {
     }
 }
 
-// FileBuilder separates uses a reader or bytes to chunk the data into raw unixfs nodes
+/// FileBuilder separates uses a reader or bytes to chunk the data into raw unixfs nodes
 impl FileBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -259,6 +260,7 @@ impl FileBuilder {
         Ok(File {
             name,
             nodes: Box::pin(self.chunker.chunks(reader)),
+            tree_builder: TreeBuilder::balanced_tree(),
         })
     }
 }

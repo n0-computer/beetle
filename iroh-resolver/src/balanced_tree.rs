@@ -14,8 +14,8 @@ use crate::unixfs_builder::encode_unixfs_pb;
 pub const DEFAULT_DEGREE: usize = 174;
 
 pub enum TreeBuilder {
-    // TreeBuilder that builds a "balanced tree" with a max degree size of
-    // degree
+    /// TreeBuilder that builds a "balanced tree" with a max degree size of
+    /// degree
     Balanced { degree: usize },
 }
 
@@ -38,7 +38,7 @@ impl TreeBuilder {
     }
 }
 
-pub fn stream_balanced_tree(
+fn stream_balanced_tree(
     in_stream: impl Stream<Item = std::io::Result<BytesMut>>,
     degree: usize,
 ) -> impl Stream<Item = Result<(Cid, Bytes)>> {
@@ -87,11 +87,11 @@ pub fn stream_balanced_tree(
                     // in this case we have a full set of links & we are
                     // at the top of the tree. Time to make a new layer.
                     if i == tree_len - 1 {
-                        tree.push_back(vec![]);
+                        tree.push_back(Vec::with_capacity(degree));
                     }
 
                     // create node, keeping the cid
-                    let links = std::mem::replace(&mut tree[i], Vec::new());
+                    let links = std::mem::replace(&mut tree[i], Vec::with_capacity(degree));
                     let (cid, bytes, len) = TreeNode::Stem(links).encode()?;
                     yield (cid, bytes);
 
@@ -133,7 +133,7 @@ pub fn stream_balanced_tree(
     }
 }
 
-fn create_unixfs_node_from_links(links: Vec<(Cid, u64)>, is_root: bool) -> Result<UnixfsNode> {
+fn create_unixfs_node_from_links(links: Vec<(Cid, u64)>) -> Result<UnixfsNode> {
     let links = links
         .into_iter()
         .map(|(cid, len)| dag_pb::PbLink {
@@ -151,10 +151,6 @@ fn create_unixfs_node_from_links(links: Vec<(Cid, u64)>, is_root: bool) -> Resul
 
     // create PBNode
     let outer = encode_unixfs_pb(&inner, links)?;
-
-    if is_root {
-        return Ok(UnixfsNode::Directory(Node { inner, outer }));
-    }
 
     // create UnixfsNode
     Ok(UnixfsNode::File(Node { inner, outer }))
@@ -180,7 +176,7 @@ impl TreeNode {
             TreeNode::Stem(links) => {
                 // keep track of `tsize`, aka the size of the encoded tree at the given link
                 let mut cumulative_len: u64 = links.iter().map(|(_, len)| len).sum();
-                let node = create_unixfs_node_from_links(links, false)?;
+                let node = create_unixfs_node_from_links(links)?;
                 let (cid, bytes) = node.encode()?;
                 cumulative_len += bytes.len() as u64;
                 Ok((cid, bytes, cumulative_len))
