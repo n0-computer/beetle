@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Context};
+use async_std::task;
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
-use tokio::task;
 use tracing::{debug, error};
 
 /// Starts daemon process
-#[tokio::main(flavor = "multi_thread")]
+#[async_std::main]
 async fn main() -> anyhow::Result<()> {
     let version = option_env!("IROH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
     println!("Starting iroh-p2p, version {version}");
@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     iroh_util::block_until_sigint().await;
 
     // Cancel all async services
-    p2p_task.abort();
+    p2p_task.cancel().await;
 
     metrics_handle.shutdown();
     Ok(())
