@@ -40,6 +40,8 @@ pub struct Libp2pConfig {
     pub bootstrap_peers: Vec<Multiaddr>,
     /// Mdns discovery enabled.
     pub mdns: bool,
+    /// Bitswap discovery enabled.
+    pub bitswap: bool,
     /// Kademlia discovery enabled.
     pub kademlia: bool,
     /// Autonat holepunching enabled.
@@ -113,6 +115,7 @@ impl Source for Libp2pConfig {
 
         insert_into_config_map(&mut map, "kademlia", self.kademlia);
         insert_into_config_map(&mut map, "autonat", self.autonat);
+        insert_into_config_map(&mut map, "bitswap", self.bitswap);
         insert_into_config_map(&mut map, "mdns", self.mdns);
         insert_into_config_map(&mut map, "relay_server", self.relay_server);
         insert_into_config_map(&mut map, "relay_client", self.relay_client);
@@ -159,6 +162,7 @@ impl Default for Libp2pConfig {
             relay_server: true,
             relay_client: true,
             gossipsub: true,
+            bitswap: true,
             max_conns_pending_out: 256,
             max_conns_pending_in: 256,
             max_conns_in: 256,
@@ -293,6 +297,7 @@ mod tests {
         expect.insert("kademlia".to_string(), Value::new(None, default.kademlia));
         expect.insert("autonat".to_string(), Value::new(None, default.autonat));
         expect.insert("mdns".to_string(), Value::new(None, default.mdns));
+        expect.insert("bitswap".to_string(), Value::new(None, default.bitswap));
         expect.insert(
             "relay_server".to_string(),
             Value::new(None, default.relay_server),

@@ -19,7 +19,7 @@ use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
-use tracing::warn;
+use tracing::{info, warn};
 
 pub(crate) use self::event::Event;
 use self::peer_manager::PeerManager;
@@ -34,7 +34,7 @@ mod peer_manager;
 pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: Identify,
-    pub(crate) bitswap: Bitswap,
+    pub(crate) bitswap: Toggle<Bitswap>,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
     pub(crate) autonat: Toggle<autonat::Behaviour>,
@@ -51,11 +51,19 @@ impl NodeBehaviour {
         config: &Libp2pConfig,
         relay_client: Option<relay::v2::client::Client>,
     ) -> Result<Self> {
-        let bs_config = BitswapConfig::default();
-        let bitswap = Bitswap::new(bs_config);
         let peer_manager = PeerManager::default();
 
+        let bitswap = if config.bitswap {
+            info!("init bitswap");
+            let bs_config = BitswapConfig::default();
+            Some(Bitswap::new(bs_config))
+        } else {
+            None
+        }
+        .into();
+
         let mdns = if config.mdns {
+            info!("init mdns");
             Some(Mdns::new(Default::default()).await?)
         } else {
             None
@@ -63,6 +71,7 @@ impl NodeBehaviour {
         .into();
 
         let kad = if config.kademlia {
+            info!("init kademlia");
             let pub_key = local_key.public();
 
             // TODO: persist to store
@@ -98,6 +107,7 @@ impl NodeBehaviour {
         .into();
 
         let autonat = if config.autonat {
+            info!("init autonat");
             let pub_key = local_key.public();
             let config = autonat::Config {
                 use_connected: true,
@@ -114,6 +124,7 @@ impl NodeBehaviour {
         .into();
 
         let relay = if config.relay_server {
+            info!("init relay server");
             let config = relay::v2::relay::Config::default();
             let r = relay::v2::relay::Relay::new(local_key.public().to_peer_id(), config);
             Some(r)
@@ -123,6 +134,7 @@ impl NodeBehaviour {
         .into();
 
         let (dcutr, relay_client) = if config.relay_client {
+            info!("init relay client");
             let relay_client =
                 relay_client.expect("missing relay client even though it was enabled");
             let dcutr = dcutr::behaviour::Behaviour::new();
@@ -138,6 +150,7 @@ impl NodeBehaviour {
         };
 
         let gossipsub = if config.gossipsub {
+            info!("init gossipsub");
             let gossipsub_config = GossipsubConfig::default();
             let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
             Some(
@@ -166,28 +179,38 @@ impl NodeBehaviour {
 
     /// Send a block to a peer over bitswap
     pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> Result<()> {
-        self.bitswap.send_block(peer_id, cid, data);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.send_block(peer_id, cid, data);
+        }
         Ok(())
     }
 
     pub fn cancel_block(&mut self, cid: &Cid) -> Result<()> {
-        self.bitswap.cancel_block(cid);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.cancel_block(cid);
+        }
         Ok(())
     }
 
     pub fn cancel_want_block(&mut self, cid: &Cid) -> Result<()> {
-        self.bitswap.cancel_want_block(cid);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.cancel_want_block(cid);
+        }
         Ok(())
     }
 
     /// Send a block have to a peer over bitswap
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) -> Result<()> {
-        self.bitswap.send_have_block(peer_id, cid);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.send_have_block(peer_id, cid);
+        }
         Ok(())
     }
 
     pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> Result<()> {
-        self.bitswap.find_providers(cid, priority);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.find_providers(cid, priority);
+        }
         Ok(())
     }
 
@@ -202,7 +225,9 @@ impl NodeBehaviour {
         priority: Priority,
         providers: HashSet<PeerId>,
     ) -> Result<(), Box<dyn Error>> {
-        self.bitswap.want_block(cid, priority, providers);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.want_block(cid, priority, providers);
+        }
         Ok(())
     }
 
