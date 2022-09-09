@@ -1,9 +1,9 @@
-use std::future::Future;
+// use std::future::Future;
 use std::pin::Pin;
 
 use asynchronous_codec::{Decoder, Encoder, Framed};
 use bytes::{Bytes, BytesMut};
-use futures::future;
+use futures::{future, Future};
 use futures::io::{AsyncRead, AsyncWrite};
 use libp2p::core::{InboundUpgrade, OutboundUpgrade, ProtocolName, UpgradeInfo};
 use unsigned_varint::codec;

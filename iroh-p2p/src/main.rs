@@ -5,6 +5,8 @@ use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
 use tokio::task;
 use tracing::{debug, error};
+// use tokio::runtime::{self, UnhandledPanic};
+// use tokio::runtime::UnhandledPanic;
 
 /// Starts daemon process
 async fn main_inner() -> Result<()> {
@@ -25,14 +27,14 @@ async fn main_inner() -> Result<()> {
         // map of present command line arguments
         args.make_overrides_map(),
     )
-    .context("invalid config")?;
+    .context("invalid config").unwrap();
 
     let metrics_config =
         metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
 
     let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
         .await
-        .map_err(|e| anyhow!("metrics init failed: {:?}", e))?;
+        .map_err(|e| anyhow!("metrics init failed: {:?}", e)).unwrap();
 
     #[cfg(unix)]
     {
@@ -42,11 +44,11 @@ async fn main_inner() -> Result<()> {
         }
     }
 
-    let kc = Keychain::<DiskStorage>::new().await?;
+    let kc = Keychain::<DiskStorage>::new().await.unwrap();
     let rpc_addr = network_config
-        .server_rpc_addr()?
-        .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;
-    let mut p2p = Node::new(network_config, rpc_addr, kc).await?;
+        .server_rpc_addr().unwrap()
+        .ok_or_else(|| anyhow!("missing p2p rpc addr")).unwrap();
+    let mut p2p = Node::new(network_config, rpc_addr, kc).await.unwrap();
 
     // Start services
     task::unconstrained(async move {
@@ -57,6 +59,7 @@ async fn main_inner() -> Result<()> {
     .await;
 
     iroh_util::block_until_sigint().await;
+    
 
     // Cancel all async services
     // TODO: proper shutdown

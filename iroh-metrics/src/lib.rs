@@ -31,6 +31,7 @@ use crate::core::MetricType;
 #[allow(unused_imports)]
 use crate::core::MetricsRecorder;
 use crate::core::CORE;
+use opentelemetry::sdk::trace::Sampler;
 use opentelemetry::{
     global,
     sdk::{propagation::TraceContextPropagator, trace, Resource},
@@ -121,9 +122,10 @@ fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
             .with_endpoint(cfg.collector_endpoint)
             .with_timeout(std::time::Duration::from_secs(5));
 
-        let tracer = opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_exporter(exporter)
+        // let tracer = opentelemetry_otlp::new_pipeline()
+        let tracer = opentelemetry_jaeger::new_pipeline()
+            // .tracing()
+            // .with_exporter(exporter)
             .with_trace_config(trace::config().with_resource(Resource::new(vec![
                 opentelemetry::KeyValue::new("instance.id", cfg.instance_id),
                 opentelemetry::KeyValue::new("service.name", cfg.service_name),
@@ -132,7 +134,10 @@ fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
                 opentelemetry::KeyValue::new("service.os", OS),
                 opentelemetry::KeyValue::new("service.ARCH", ARCH),
                 opentelemetry::KeyValue::new("service.environment", cfg.service_env),
-            ])))
+            ]))
+            .with_sampler(Sampler::TraceIdRatioBased(0.005)))
+            .with_max_packet_size(9216) // Default max UDP packet size on OSX
+            .with_auto_split_batch(true)
             .install_batch(opentelemetry::runtime::Tokio)?;
 
         Some(tracing_opentelemetry::layer().with_tracer(tracer))
