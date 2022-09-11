@@ -15,9 +15,14 @@ use libp2p::gossipsub::{
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
-use tokio::sync::mpsc;
+<<<<<<< HEAD
 use tokio::sync::mpsc::{channel, Sender};
+use tracing::trace;
+=======
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
 use tracing::{trace, error};
+>>>>>>> 66e1db5 (more fun)
 
 use async_trait::async_trait;
 use iroh_bitswap::{Block, QueryError};
@@ -53,7 +58,6 @@ impl RpcP2p for P2p {
     async fn fetch_bitswap(&self, req: BitswapRequest) -> Result<BitswapResponse> {
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
 
-        error!("!BITSWAP: making bitswap request 1 for {:?}", cid);
         trace!("received BitswapRequest: {:?}", cid);
         let providers = req
             .providers
@@ -71,10 +75,9 @@ impl RpcP2p for P2p {
             providers,
             response_channels: vec![s],
         };
-        error!("!BITSWAP: making bitswap 2 request for {:?}", cid);
+        error!("!BITSWAP: making bitswap request for {:?}", cid);
         self.sender.clone().send(msg).await.unwrap();
-        error!("!BITSWAP: awaiting bitswap 3 request for {:?}", cid);
-        let block = r.await.context("bitswap").unwrap()?;
+        let block = r.await?.context("bitswap").unwrap();
 
         ensure!(
             cid == block.cid,
@@ -129,8 +132,12 @@ impl RpcP2p for P2p {
             response_channel: s,
         };
 
+<<<<<<< HEAD
+        self.sender.send(msg).await?;
+=======
         self.sender.clone().send(msg).await?;
 
+>>>>>>> 66e1db5 (more fun)
         let r = tokio_stream::wrappers::ReceiverStream::new(r);
 
         Ok(Box::pin(r.map(|providers| {
@@ -153,8 +160,12 @@ impl RpcP2p for P2p {
             response_channel: s,
         };
 
+<<<<<<< HEAD
+        self.sender.send(msg).await?;
+=======
         self.sender.clone().send(msg).await?;
 
+>>>>>>> 66e1db5 (more fun)
         let r = tokio_stream::wrappers::ReceiverStream::new(r);
 
         Ok(Box::pin(r.map(|providers| {
