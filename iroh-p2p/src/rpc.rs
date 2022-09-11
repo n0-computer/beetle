@@ -6,8 +6,6 @@ use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 // use futures::{StreamExt};
-use tokio_stream::{Stream, StreamExt};
-use tokio::sync::oneshot;
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -17,7 +15,9 @@ use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Sender};
-use tracing::{trace, error};
+use tokio::sync::oneshot;
+use tokio_stream::{Stream, StreamExt};
+use tracing::{error, trace};
 
 use async_trait::async_trait;
 use iroh_bitswap::{Block, QueryError};
@@ -74,8 +74,10 @@ impl RpcP2p for P2p {
         error!("!BITSWAP: making bitswap 2 request for {:?}", cid);
         self.sender.clone().send(msg).await.unwrap();
         error!("!BITSWAP: awaiting bitswap 3 request for {:?}", cid);
-        let block = r.await.context("bitswap").unwrap()?;
-
+        let block = r
+            .await
+            .expect("should not drop accidentially")
+            .context("bitswap")?;
         ensure!(
             cid == block.cid,
             "unexpected bitswap response: expected: {} got: {}",
@@ -83,7 +85,7 @@ impl RpcP2p for P2p {
             block.cid
         );
 
-    error!("!BITSWAP: bitswap response for {:?}", cid);
+        error!("!BITSWAP: bitswap response for {:?}", cid);
         Ok(BitswapResponse { data: block.data })
     }
 
