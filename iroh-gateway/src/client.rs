@@ -15,7 +15,7 @@ use iroh_resolver::resolver::{
 };
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 use crate::handlers::GetParams;
 use crate::response::ResponseFormat;
@@ -82,7 +82,7 @@ impl Client {
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
     ) -> Result<(FileResult, Metadata), String> {
-        info!("get file {}", path);
+        error!("get file {}", path);
         let res = self.clone()
             .resolver.clone()
             .resolve(path)
@@ -126,7 +126,7 @@ impl Client {
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
     ) -> Result<axum::body::Body, String> {
-        info!("get file {}", path);
+        error!("get file recursive {}", path);
         let (mut sender, body) = axum::body::Body::channel();
 
         tokio::spawn(async move {

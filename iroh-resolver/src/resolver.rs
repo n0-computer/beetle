@@ -595,8 +595,7 @@ impl ContentLoader for Client {
             .try_p2p()?
             .clone()
             .fetch_bitswap(cid, providers)
-            .await
-            .unwrap();
+            .await?;
 
         // trigger storage in the background
         let clone = bytes.clone();

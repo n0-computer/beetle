@@ -53,6 +53,7 @@ impl RpcP2p for P2p {
     async fn fetch_bitswap(&self, req: BitswapRequest) -> Result<BitswapResponse> {
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
 
+        error!("!BITSWAP: making bitswap request 1 for {:?}", cid);
         trace!("received BitswapRequest: {:?}", cid);
         let providers = req
             .providers
@@ -70,7 +71,7 @@ impl RpcP2p for P2p {
             providers,
             response_channels: vec![s],
         };
-        error!("!BITSWAP: making bitswap request for {:?}", cid);
+        error!("!BITSWAP: making bitswap 2 request for {:?}", cid);
         self.sender.clone().send(msg).await.unwrap();
         let block = r.await?.context("bitswap").unwrap();
 

@@ -30,7 +30,7 @@ tracing-opentelemetry = "0.17.2"
 opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 time = "0.3.9"
 headers = "0.3.7"
-hyper = "0.14.19"
+hyper = "0.14.20"
 libp2p = { version = "0.48", default-features = false }
 iroh-util = { path = "../iroh-util" }
 anyhow = "1"
