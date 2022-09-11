@@ -67,7 +67,7 @@ impl ContentLoader for Loader {
         let cid = *cid;
         let providers = self.providers.lock().await.clone();
 
-        match self.client.try_store()?.get(cid).await {
+        match self.client.clone().try_store()?.get(cid).await {
             Ok(Some(data)) => {
                 return Ok(LoadedCid {
                     data,
@@ -83,7 +83,7 @@ impl ContentLoader for Loader {
         ensure!(!providers.is_empty(), "no providers supplied");
 
         let res = self
-            .client
+            .client.clone()
             .try_p2p()?
             .fetch_bitswap(cid, providers.clone())
             .await;
@@ -104,7 +104,7 @@ impl ContentLoader for Loader {
                     .await
                     .unwrap_or_default();
 
-            rpc.client.try_store()?.put(cid, cloned, links).await?;
+            rpc.client.clone().try_store()?.put(cid, cloned, links).await?;
         }
 
         Ok(LoadedCid {

@@ -135,7 +135,7 @@ fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
                 opentelemetry::KeyValue::new("service.ARCH", ARCH),
                 opentelemetry::KeyValue::new("service.environment", cfg.service_env),
             ]))
-            .with_sampler(Sampler::TraceIdRatioBased(0.005)))
+            .with_sampler(Sampler::TraceIdRatioBased(1.0)))
             .with_max_packet_size(9216) // Default max UDP packet size on OSX
             .with_auto_split_batch(true)
             .install_batch(opentelemetry::runtime::Tokio)?;

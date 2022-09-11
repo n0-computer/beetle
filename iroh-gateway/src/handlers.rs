@@ -333,7 +333,7 @@ async fn serve_raw(
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
-        .client
+        .client.clone()
         .get_file(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
@@ -367,7 +367,7 @@ async fn serve_car(
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
-        .client
+        .client.clone()
         .get_file(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
@@ -435,7 +435,7 @@ async fn serve_fs(
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
-        .client
+        .client.clone()
         .get_file(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
@@ -444,7 +444,7 @@ async fn serve_fs(
     match body {
         FileResult::Directory(res) => {
             let dir_list: anyhow::Result<Vec<_>> = res
-                .unixfs_read_dir(&state.client.resolver, OutMetrics { start: start_time })
+                .unixfs_read_dir(&state.client.resolver.clone(), OutMetrics { start: start_time })
                 .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), &state))?
                 .expect("already known this is a directory")
                 .try_collect()

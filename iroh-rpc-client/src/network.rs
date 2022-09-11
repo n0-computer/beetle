@@ -18,6 +18,8 @@ use libp2p::{Multiaddr, PeerId};
 #[cfg(feature = "grpc")]
 use tonic::transport::Endpoint;
 #[cfg(feature = "grpc")]
+use tonic::transport::Channel;
+#[cfg(feature = "grpc")]
 use tonic_health::proto::health_client::HealthClient;
 use tracing::{debug, warn};
 
@@ -29,7 +31,7 @@ impl_client!(P2p);
 impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let res = self.backend.version(()).await?;
+        let res = self.backend.clone().version(()).await?;
         Ok(res.version)
     }
 
@@ -45,7 +47,7 @@ impl P2pClient {
             cid: cid.to_bytes(),
             providers: Some(providers),
         };
-        let res = self.backend.fetch_bitswap(req).await?;
+        let res = self.clone().backend.clone().fetch_bitswap(req.clone()).await?;
         Ok(res.data)
     }
 
@@ -64,7 +66,7 @@ impl P2pClient {
             cid: cid.to_bytes(),
             providers: Some(providers),
         };
-        self.backend.inject_provider_bitswap(req).await?;
+        self.backend.clone().inject_provider_bitswap(req).await?;
         Ok(())
     }
 
@@ -76,7 +78,7 @@ impl P2pClient {
         let req = Key {
             key: key.hash().to_bytes(),
         };
-        let res = self.backend.fetch_provider_dht(req).await?;
+        let res = self.backend.clone().fetch_provider_dht(req).await?;
 
         let providers_stream = res.map(|p| {
             let p = p?;
@@ -97,7 +99,7 @@ impl P2pClient {
         let req = Key {
             key: key.to_bytes(),
         };
-        let res = self.backend.fetch_provider_bitswap(req).await?;
+        let res = self.backend.clone().fetch_provider_bitswap(req).await?;
         let providers_stream = res.map(|p| {
             let p = p?;
             let mut providers = HashSet::new();
@@ -111,7 +113,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>)> {
-        let res = self.backend.get_listening_addrs(()).await?;
+        let res = self.backend.clone().get_listening_addrs(()).await?;
         let peer_id = PeerId::from_bytes(&res.peer_id[..])?;
         let addrs = addrs_from_bytes(res.addrs)?;
         Ok((peer_id, addrs))
@@ -119,7 +121,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        let peers = self.backend.get_peers(()).await?.peers;
+        let peers = self.backend.clone().get_peers(()).await?.peers;
         let mut peers_map = HashMap::new();
         for (peer, addrs) in peers.into_iter() {
             let peer = peer.parse()?;
@@ -135,7 +137,7 @@ impl P2pClient {
             peer_id: peer_id.to_bytes(),
             addrs: addrs.iter().map(|a| a.to_vec()).collect(),
         };
-        let res = self.backend.peer_connect(req).await?;
+        let res = self.backend.clone().peer_connect(req).await?;
         ensure!(res.success, "dial failed");
         Ok(())
     }
@@ -146,13 +148,13 @@ impl P2pClient {
         let req = DisconnectRequest {
             peer_id: peer_id.to_bytes(),
         };
-        self.backend.peer_disconnect(req).await?;
+        self.backend.clone().peer_disconnect(req).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
-        self.backend.shutdown(()).await?;
+        self.backend.clone().shutdown(()).await?;
         Ok(())
     }
 
@@ -161,20 +163,20 @@ impl P2pClient {
         let req = GossipsubPeerIdMsg {
             peer_id: peer_id.to_bytes(),
         };
-        self.backend.gossipsub_add_explicit_peer(req).await?;
+        self.backend.clone().gossipsub_add_explicit_peer(req).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_all_mesh_peers(&self) -> Result<Vec<PeerId>> {
-        let res = self.backend.gossipsub_all_mesh_peers(()).await?;
+        let res = self.backend.clone().gossipsub_all_mesh_peers(()).await?;
         let peer_ids = peer_ids_from_bytes(res.peers)?;
         Ok(peer_ids)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_all_peers(&self) -> Result<Vec<(PeerId, Vec<TopicHash>)>> {
-        let res = self.backend.gossipsub_all_peers(()).await?.all;
+        let res = self.backend.clone().gossipsub_all_peers(()).await?.all;
         let peers_and_topics = all_peers_from_bytes(res)?;
         Ok(peers_and_topics)
     }
@@ -184,7 +186,7 @@ impl P2pClient {
         let req = GossipsubTopicHashMsg {
             topic_hash: topic.into_string(),
         };
-        let res = self.backend.gossipsub_mesh_peers(req).await?;
+        let res = self.backend.clone().gossipsub_mesh_peers(req).await?;
         let peer_ids = peer_ids_from_bytes(res.peers)?;
         Ok(peer_ids)
     }
@@ -195,7 +197,7 @@ impl P2pClient {
             topic_hash: topic_hash.to_string(),
             data,
         };
-        let res = self.backend.gossipsub_publish(req).await?;
+        let res = self.backend.clone().gossipsub_publish(req).await?;
         let message_id = MessageId::new(&res.message_id);
         Ok(message_id)
     }
@@ -205,7 +207,7 @@ impl P2pClient {
         let req = GossipsubPeerIdMsg {
             peer_id: peer_id.to_bytes(),
         };
-        self.backend.gossipsub_remove_explicit_peer(req).await?;
+        self.backend.clone().gossipsub_remove_explicit_peer(req).await?;
         Ok(())
     }
 
@@ -214,13 +216,13 @@ impl P2pClient {
         let req = GossipsubTopicHashMsg {
             topic_hash: topic.to_string(),
         };
-        let res = self.backend.gossipsub_subscribe(req).await?;
+        let res = self.backend.clone().gossipsub_subscribe(req).await?;
         Ok(res.was_subscribed)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_topics(&self) -> Result<Vec<TopicHash>> {
-        let res = self.backend.gossipsub_topics(()).await?;
+        let res = self.backend.clone().gossipsub_topics(()).await?;
         let topics = res.topics.into_iter().map(TopicHash::from_raw).collect();
         Ok(topics)
     }
@@ -230,7 +232,7 @@ impl P2pClient {
         let req = GossipsubTopicHashMsg {
             topic_hash: topic.to_string(),
         };
-        let res = self.backend.gossipsub_unsubscribe(req).await?;
+        let res = self.backend.clone().gossipsub_unsubscribe(req).await?;
         Ok(res.was_subscribed)
     }
 }

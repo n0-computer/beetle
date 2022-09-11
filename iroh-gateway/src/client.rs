@@ -83,8 +83,8 @@ impl Client {
         start_time: std::time::Instant,
     ) -> Result<(FileResult, Metadata), String> {
         info!("get file {}", path);
-        let res = self
-            .resolver
+        let res = self.clone()
+            .resolver.clone()
             .resolve(path)
             .await
             .map_err(|e| e.to_string())?;
@@ -130,7 +130,7 @@ impl Client {
         let (mut sender, body) = axum::body::Body::channel();
 
         tokio::spawn(async move {
-            let res = self.resolver.resolve_recursive(path);
+            let res = self.resolver.clone().resolve_recursive(path);
             tokio::pin!(res);
 
             while let Some(res) = res.next().await {

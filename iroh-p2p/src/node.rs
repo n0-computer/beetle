@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
 use cid::Cid;
-use futures::channel::oneshot::Sender as OneShotSender;
+use tokio::sync::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
@@ -76,7 +76,7 @@ pub struct Node<KeyStorage: Storage> {
     rpc_client: RpcClient,
     _keychain: Keychain<KeyStorage>,
     kad_last_range: Option<(Distance, Distance)>,
-    rpc_task: JoinHandle<()>,
+    rpc_task: std::thread::JoinHandle<()>,
 }
 
 enum BitswapQueryChannel {
@@ -116,7 +116,7 @@ const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
     fn drop(&mut self) {
-        // self.rpc_task.cancel();
+        // self.rpc_task.join();
     }
 }
 
@@ -141,9 +141,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             ..
         } = config;
 
-        let rpc_task = tokio::task::spawn(async move {
+        let rpc_task = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(rpc::new(rpc_addr, network_sender_in)).unwrap();
             // TODO: handle error
-            rpc::new(rpc_addr, network_sender_in).await.unwrap()
+            // async move {
+            // rpc::new(rpc_addr, network_sender_in).await.unwrap()
+            // }
         });
 
         let rpc_client = RpcClient::new(rpc_client)
@@ -775,7 +782,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.bitswap_queries.insert(
                         BitswapQueryKey::Want(cid),
                         BitswapQueryChannel::Want {
-                            timeout: Instant::now(),
+                            // timeout: Instant::now(),
                             chan: response_channel,
                         },
                     );

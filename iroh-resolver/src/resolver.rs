@@ -454,12 +454,13 @@ async fn fetch_providers(
     client: &Client,
     cid: &Cid,
 ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
-    let p2p = client.try_p2p()?;
+    let p2p = client.clone();
+    let p2p = p2p.try_p2p()?;
 
     let a = p2p.fetch_providers_dht(cid).await?;
-    let b = p2p.fetch_providers_bitswap(cid).await?;
+    // let b = p2p.fetch_providers_bitswap(cid).await?;
 
-    Ok(futures::stream::select(a, b))
+    Ok(a)
 }
 
 impl InnerLoaderContext {
@@ -539,7 +540,7 @@ impl ContentLoader for Client {
         // TODO: better strategy
 
         let cid = *cid;
-        match self.try_store()?.get(cid).await {
+        match self.try_store()?.clone().get(cid).await {
             Ok(Some(data)) => {
                 trace!("retrieved from store");
                 return Ok(LoadedCid {
@@ -578,11 +579,11 @@ impl ContentLoader for Client {
         });
 
         // launch fetching using the initial set of cached providers
-        let bytes = self.try_p2p()?.fetch_bitswap(cid, providers).await?;
+        let bytes = self.try_p2p()?.clone().fetch_bitswap(cid, providers).await.unwrap();
 
         // trigger storage in the background
         let clone = bytes.clone();
-        let store = self.store.as_ref().cloned();
+        let store = self.store.as_ref().cloned().clone();
 
         tokio::spawn(async move {
             let clone2 = clone.clone();

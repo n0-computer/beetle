@@ -12,6 +12,8 @@ use iroh_rpc_types::{
 #[cfg(feature = "grpc")]
 use tonic::transport::Endpoint;
 #[cfg(feature = "grpc")]
+use tonic::transport::Channel;
+#[cfg(feature = "grpc")]
 use tonic_health::proto::health_client::HealthClient;
 
 impl_client!(Gateway);

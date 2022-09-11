@@ -22,7 +22,7 @@ macro_rules! impl_client {
                     match addr {
                         #[cfg(feature = "grpc")]
                         Addr::GrpcHttp2(addr) => {
-                            let conn = Endpoint::new(format!("http://{}", addr))?
+                            let conn = Channel::from_shared(format!("http://{}", addr))?
                                 .keep_alive_while_idle(true)
                                 .connect_lazy();
 

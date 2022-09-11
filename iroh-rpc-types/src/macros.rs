@@ -213,7 +213,7 @@ macro_rules! proxy_grpc {
                             req: Request<$req>,
                         ) -> Result<Response<$tonic_res>, Status> {
                             let req = req.into_inner();
-                            let res = $label::$name(self, req).await.map_err(|err| Status::internal(err.to_string()))?;
+                            let res = $label::$name(self.clone(), req).await.map_err(|err| Status::internal(err.to_string()))?;
 
                             $(
                                 let res = {

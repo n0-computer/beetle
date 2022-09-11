@@ -53,6 +53,8 @@ async fn main() -> Result<()> {
         (store_rpc, p2p_rpc)
     };
 
+    // store_rpc.abort();
+
     #[cfg(not(feature = "uds-gateway"))]
     let (rpc_addr, gw_sender) = Addr::new_mem();
     #[cfg(not(feature = "uds-gateway"))]
@@ -116,7 +118,7 @@ async fn main() -> Result<()> {
     iroh_util::block_until_sigint().await;
 
     store_rpc.abort();
-    p2p_rpc.abort();
+    // p2p_rpc.abort();
     #[cfg(feature = "uds-gateway")]
     uds_server_task.abort();
     core_task.abort();

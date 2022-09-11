@@ -5,7 +5,9 @@ use std::pin::Pin;
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use futures::{channel::oneshot, Stream, StreamExt};
+// use futures::{StreamExt};
+use tokio_stream::{Stream, StreamExt};
+use tokio::sync::oneshot;
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -13,8 +15,9 @@ use libp2p::gossipsub::{
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Sender};
-use tracing::trace;
+use tracing::{trace, error};
 
 use async_trait::async_trait;
 use iroh_bitswap::{Block, QueryError};
@@ -40,7 +43,7 @@ impl RpcP2p for P2p {
 
     #[tracing::instrument(skip(self))]
     async fn shutdown(&self, _: ()) -> Result<()> {
-        self.sender.send(RpcMessage::Shutdown).await?;
+        self.sender.clone().send(RpcMessage::Shutdown).await?;
         Ok(())
     }
 
@@ -67,9 +70,9 @@ impl RpcP2p for P2p {
             providers,
             response_channels: vec![s],
         };
-        trace!("making bitswap request for {:?}", cid);
-        self.sender.send(msg).await?;
-        let block = r.await?.context("bitswap")?;
+        error!("!BITSWAP: making bitswap request for {:?}", cid);
+        self.sender.clone().send(msg).await.unwrap();
+        let block = r.await?.context("bitswap").unwrap();
 
         ensure!(
             cid == block.cid,
@@ -78,7 +81,7 @@ impl RpcP2p for P2p {
             block.cid
         );
 
-        trace!("bitswap response for {:?}", cid);
+    error!("!BITSWAP: bitswap response for {:?}", cid);
         Ok(BitswapResponse { data: block.data })
     }
 
@@ -106,7 +109,7 @@ impl RpcP2p for P2p {
             response_channel: s,
         };
 
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
         r.await?.context("bitswap inject provider")?;
 
         Ok(())
@@ -124,7 +127,8 @@ impl RpcP2p for P2p {
             response_channel: s,
         };
 
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
+
         let r = tokio_stream::wrappers::ReceiverStream::new(r);
 
         Ok(Box::pin(r.map(|providers| {
@@ -147,7 +151,8 @@ impl RpcP2p for P2p {
             response_channel: s,
         };
 
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
+
         let r = tokio_stream::wrappers::ReceiverStream::new(r);
 
         Ok(Box::pin(r.map(|providers| {
@@ -162,7 +167,7 @@ impl RpcP2p for P2p {
     async fn get_listening_addrs(&self, _: ()) -> Result<GetListeningAddrsResponse> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetListeningAddrs(s);
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let (peer_id, addrs) = r.await?;
 
@@ -176,7 +181,7 @@ impl RpcP2p for P2p {
     async fn get_peers(&self, _: ()) -> Result<GetPeersResponse> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetPeers(s);
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let peers = r.await?;
         let mut p: HashMap<String, Multiaddrs> = Default::default();
@@ -197,7 +202,7 @@ impl RpcP2p for P2p {
         let addrs = addrs_from_bytes(req.addrs)?;
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetConnect(s, peer_id, addrs);
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let success = r.await?;
         Ok(ConnectResponse { success })
@@ -208,7 +213,7 @@ impl RpcP2p for P2p {
         let peer_id = peer_id_from_bytes(req.peer_id)?;
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetDisconnect(s, peer_id);
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
         let ack = r.await?;
 
         Ok(ack)
@@ -221,7 +226,7 @@ impl RpcP2p for P2p {
             s,
             peer_id_from_bytes(req.peer_id)?,
         ));
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
         r.await?;
 
         Ok(())
@@ -231,7 +236,7 @@ impl RpcP2p for P2p {
     async fn gossipsub_all_mesh_peers(&self, _: ()) -> Result<GossipsubPeersResponse> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::AllMeshPeers(s));
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
         let peers = r.await?;
 
         let peers = peers.into_iter().map(|p| p.to_bytes()).collect();
@@ -242,7 +247,7 @@ impl RpcP2p for P2p {
     async fn gossipsub_all_peers(&self, _: ()) -> Result<GossipsubAllPeersResponse> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::AllPeers(s));
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let all_peers = r.await?;
         let all = all_peers
@@ -264,7 +269,7 @@ impl RpcP2p for P2p {
         let topic = TopicHash::from_raw(req.topic_hash);
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::MeshPeers(s, topic));
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let res = r.await?;
         let peers = res.into_iter().map(|p| p.to_bytes()).collect();
@@ -281,7 +286,7 @@ impl RpcP2p for P2p {
         let topic_hash = TopicHash::from_raw(req.topic_hash);
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Publish(s, topic_hash, data));
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let message_id = r.await??;
 
@@ -295,7 +300,7 @@ impl RpcP2p for P2p {
         let peer_id = peer_id_from_bytes(req.peer_id)?;
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::RemoveExplicitPeer(s, peer_id));
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         r.await?;
         Ok(())
@@ -312,7 +317,7 @@ impl RpcP2p for P2p {
             TopicHash::from_raw(req.topic_hash),
         ));
 
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let was_subscribed = r.await??;
 
@@ -324,7 +329,7 @@ impl RpcP2p for P2p {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Topics(s));
 
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
 
         let topics: Vec<String> = r.await?.into_iter().map(|t| t.into_string()).collect();
 
@@ -342,7 +347,7 @@ impl RpcP2p for P2p {
             TopicHash::from_raw(req.topic_hash),
         ));
 
-        self.sender.send(msg).await?;
+        self.sender.clone().send(msg).await?;
         let was_subscribed = r.await??;
 
         Ok(GossipsubSubscribeResponse { was_subscribed })
