@@ -9,10 +9,19 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
+#[cfg(target_os = "linux")]
+use iroh_resolver::resolver::ContentLoader;
 use iroh_rpc_client::Client as RpcClient;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
+
+#[cfg(target_os = "linux")]
+async fn serve<T: ContentLoader + std::marker::Unpin>(_: usize, core: Core<T>) {
+    let server = core.server();
+    println!("listening on {}", server.local_addr());
+    server.await.unwrap();
+}
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -65,14 +74,38 @@ async fn main() -> Result<()> {
         }
     }
 
-    let server = handler.server();
-    println!("listening on {}", server.local_addr());
-    let core_task = tokio::spawn(async move {
-        server.await.unwrap();
-    });
+    let mut handlers = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        for i in 0..num_cpus::get() {
+            let hc = handler.clone();
+            let h = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(serve(i, hc));
+            });
+            handlers.push(h);
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let server = handler.server();
+        println!("listening on {}", server.local_addr());
+        let core_task = tokio::spawn(async move {
+            server.await.unwrap();
+        });
+        handlers.push(core_task);
+    }
 
     iroh_util::block_until_sigint().await;
-    core_task.abort();
+
+    #[cfg(not(target_os = "linux"))]
+    for h in handlers {
+        h.abort();
+    }
 
     metrics_handle.shutdown();
     if let Some(handle) = bad_bits_handle {

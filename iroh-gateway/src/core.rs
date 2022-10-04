@@ -2,7 +2,6 @@ use axum::Router;
 use iroh_resolver::resolver::ContentLoader;
 use iroh_rpc_types::gateway::GatewayServerAddr;
 
-use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -12,6 +11,12 @@ use crate::{
     rpc,
     rpc::Gateway,
     templates,
+};
+
+use std::{
+    collections::HashMap,
+    net::{SocketAddr, TcpListener},
+    sync::Arc,
 };
 
 #[derive(Debug, Clone)]
@@ -92,7 +97,31 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port());
 
-        axum::Server::bind(&addr.parse().unwrap())
+        let addr: std::net::SocketAddr = addr.parse().unwrap();
+        let sock = socket2::Socket::new(
+            match addr {
+                SocketAddr::V4(_) => socket2::Domain::IPV4,
+                SocketAddr::V6(_) => socket2::Domain::IPV6,
+            },
+            socket2::Type::STREAM,
+            None,
+        )
+        .unwrap();
+
+        // on windows and many BSD based distributions (including macOS) this does not
+        // load balance across the sockets and thus still actively only uses 1 binding
+        // on windows setting SO_REUSEADDR is equivalent to SO_REUSEADDR + SO_REUSEPORT on unix based systems
+        #[cfg(unix)]
+        sock.set_reuse_port(true).unwrap();
+        sock.set_reuse_address(true).unwrap();
+        sock.set_nonblocking(true).unwrap();
+        sock.bind(&addr.into()).unwrap();
+        sock.listen(8192 * 2).unwrap();
+
+        let incoming: TcpListener = sock.into();
+
+        axum::Server::from_tcp(incoming)
+            .unwrap()
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
             .serve(app.into_make_service())
