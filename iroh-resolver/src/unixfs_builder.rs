@@ -514,10 +514,15 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use crate::resolver::{OutMetrics, Resolver};
+
     use super::*;
     use anyhow::Result;
     use futures::TryStreamExt;
-    use std::io::prelude::*;
+    use rand::prelude::*;
+    use rand_chacha::ChaCha8Rng;
+    use std::{collections::HashMap, io::prelude::*};
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn test_builder_basics() -> Result<()> {
@@ -635,6 +640,41 @@ mod tests {
         assert_eq!(links[1].cid, baz_encoded[0].0);
 
         // TODO: check content
+        Ok(())
+    }
+
+    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+        out
+    }
+
+    #[tokio::test]
+    async fn test_builder_roundtrip_huge() -> Result<()> {
+        let mut rng = ChaCha8Rng::from_seed([0; 32]);
+        let mut data = vec![0u8; 128 * 1024 * 1024];
+        rng.fill(data.as_mut_slice());
+        let mut builder = FileBuilder::new();
+        let reader = std::io::Cursor::new(data.clone());
+        builder.name("128m.bin").content_reader(reader);
+        let file = builder.build().await?;
+        let stream = file.encode().await?;
+        tokio::pin!(stream);
+        let mut store = HashMap::default();
+        let mut root: Option<Cid> = None;
+        while let Some(item) = stream.next().await {
+            let (cid, blob) = item?;
+            println!("{} {}", cid, blob.len());
+            root = Some(cid);
+            store.insert(cid, blob);
+        }
+        let resolver = Resolver::new(store.clone());
+        let out = resolver
+            .resolve(crate::resolver::Path::from_cid(root.unwrap()))
+            .await?;
+        let t = read_to_vec(out.pretty(Resolver::new(store), OutMetrics::default())?).await;
+        assert_eq!(t.len(), data.len());
+        assert_eq!(t, data);
         Ok(())
     }
 
