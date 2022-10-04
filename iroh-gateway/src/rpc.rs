@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use iroh_rpc_types::gateway::{Gateway as RpcGateway, GatewayServerAddr, VersionResponse};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Gateway {}
 
 #[async_trait]

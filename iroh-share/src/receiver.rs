@@ -60,7 +60,7 @@ impl Receiver {
             mut gossip_messages,
             gossip_task,
         } = self;
-        let p2p_rpc = p2p.rpc().try_p2p()?;
+        let p2p_rpc = p2p.rpc().p2p.clone().unwrap().get();
         p2p_rpc
             .connect(ticket.peer_id, ticket.addrs.clone())
             .await?;

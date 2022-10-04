@@ -35,15 +35,15 @@ pub struct State<T: ContentLoader> {
 impl<T: ContentLoader + std::marker::Unpin> Core<T> {
     pub async fn new(
         config: Arc<dyn StateConfig>,
-        rpc_addr: GatewayServerAddr,
+        // rpc_addr: GatewayServerAddr,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
         content_loader: T,
     ) -> anyhow::Result<Self> {
-        tokio::spawn(async move {
-            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
-                tracing::error!("Failed to run gateway rpc handler: {}", err);
-            }
-        });
+        // tokio::spawn(async move {
+        //     if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
+        //         tracing::error!("Failed to run gateway rpc handler: {}", err);
+        //     }
+        // });
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
@@ -108,12 +108,13 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         )
         .unwrap();
 
+        sock.set_reuse_address(true).unwrap();
         // on windows and many BSD based distributions (including macOS) this does not
         // load balance across the sockets and thus still actively only uses 1 binding
         // on windows setting SO_REUSEADDR is equivalent to SO_REUSEADDR + SO_REUSEPORT on unix based systems
         #[cfg(unix)]
         sock.set_reuse_port(true).unwrap();
-        sock.set_reuse_address(true).unwrap();
+        sock.set_nodelay(true).unwrap();
         sock.set_nonblocking(true).unwrap();
         sock.bind(&addr.into()).unwrap();
         sock.listen(8192 * 2).unwrap();
@@ -150,9 +151,8 @@ mod tests {
         );
         config.set_default_headers();
 
-        let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let content_loader = RpcClient::new(config.rpc_client().clone()).await.unwrap();
-        let handler = Core::new(Arc::new(config), rpc_addr, Arc::new(None), content_loader)
+        let handler = Core::new(Arc::new(config), Arc::new(None), content_loader)
             .await
             .unwrap();
         let server = handler.server();

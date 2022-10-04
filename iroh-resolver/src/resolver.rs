@@ -447,7 +447,8 @@ impl ContentLoader for Client {
         // TODO: better strategy
 
         let cid = *cid;
-        match self.try_store()?.get(cid).await {
+        let getter = self.store.clone().unwrap().get();
+        match getter.get(cid).await {
             Ok(Some(data)) => {
                 trace!("retrieved from store");
                 return Ok(LoadedCid {
@@ -460,7 +461,7 @@ impl ContentLoader for Client {
                 warn!("failed to fetch data from store {}: {:?}", cid, err);
             }
         }
-        let p2p = self.try_p2p()?;
+        let p2p = self.p2p.clone().unwrap().get();
         let providers = p2p.fetch_providers(&cid).await?;
         let bytes = p2p.fetch_bitswap(cid, providers).await?;
 
@@ -477,7 +478,8 @@ impl ContentLoader for Client {
             let len = cloned.len();
             let links_len = links.len();
             if let Some(store_rpc) = rpc.store.as_ref() {
-                match store_rpc.put(cid, cloned, links).await {
+                let putter = store_rpc.clone().get();
+                match putter.put(cid, cloned, links).await {
                     Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
                     Err(err) => {
                         warn!("failed to store {}: {:?}", cid, err);

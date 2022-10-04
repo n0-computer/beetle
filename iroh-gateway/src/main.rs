@@ -9,16 +9,19 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
-#[cfg(target_os = "linux")]
-use iroh_resolver::resolver::ContentLoader;
+// use iroh_resolver::resolver::ContentLoader;
 use iroh_rpc_client::Client as RpcClient;
+use iroh_rpc_types::gateway::GatewayServerAddr;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
-#[cfg(target_os = "linux")]
-async fn serve<T: ContentLoader + std::marker::Unpin>(_: usize, core: Core<T>) {
-    let server = core.server();
+async fn serve(_: usize, config: Config, content_loader: RpcClient) {
+    
+    let handler = Core::new(Arc::new(config), Arc::new(None), content_loader)
+        .await
+        .unwrap();
+    let server = handler.server();
     println!("listening on {}", server.local_addr());
     server.await.unwrap();
 }
@@ -48,23 +51,15 @@ async fn main() -> Result<()> {
         true => Arc::new(Some(RwLock::new(BadBits::new()))),
         false => Arc::new(None),
     };
-    let rpc_addr = config
-        .server_rpc_addr()?
-        .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
-    let handler = Core::new(
-        Arc::new(config),
-        rpc_addr,
-        Arc::clone(&bad_bits),
-        content_loader,
-    )
-    .await?;
+    // let rpc_addr = config
+    //     .server_rpc_addr()?
+    //     .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
     let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 
-    let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
-        .await
-        .expect("failed to initialize metrics");
+    // let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
+    //     .await
+    //     .expect("failed to initialize metrics");
 
     #[cfg(unix)]
     {
@@ -74,40 +69,46 @@ async fn main() -> Result<()> {
         }
     }
 
+    let content_loader = RpcClient::new(config.rpc_client.clone()).await.unwrap();
+
     let mut handlers = Vec::new();
     #[cfg(target_os = "linux")]
+    // #[cfg(not(target_os = "linux"))]
     {
         for i in 0..num_cpus::get() {
-            let hc = handler.clone();
+            let cc = config.clone();
+            let cl = content_loader.clone();
             let h = std::thread::spawn(move || {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .unwrap()
-                    .block_on(serve(i, hc));
+                    .block_on(serve(i, cc, cl));
             });
             handlers.push(h);
         }
     }
 
     #[cfg(not(target_os = "linux"))]
+    // #[cfg(target_os = "linux")]
     {
-        let server = handler.server();
-        println!("listening on {}", server.local_addr());
-        let core_task = tokio::spawn(async move {
-            server.await.unwrap();
+        let core_task = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(serve(0, config.clone(), content_loader));
         });
         handlers.push(core_task);
     }
 
     iroh_util::block_until_sigint().await;
 
-    #[cfg(not(target_os = "linux"))]
     for h in handlers {
-        h.abort();
+        h.join().unwrap();
     }
 
-    metrics_handle.shutdown();
+    // metrics_handle.shutdown();
     if let Some(handle) = bad_bits_handle {
         handle.abort();
     }
