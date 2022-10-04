@@ -390,7 +390,8 @@ pub trait Store {
 #[async_trait]
 impl Store for &Client {
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.try_store()?.put(cid, blob, links).await
+        let cs = self.store.clone().unwrap().get();
+        cs.put(cid, blob, links).await
     }
 }
 
@@ -402,8 +403,10 @@ pub struct StoreAndProvideClient<'a> {
 #[async_trait]
 impl<'a> Store for &StoreAndProvideClient<'a> {
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.client.try_store()?.put(cid, blob, links).await?;
-        self.client.try_p2p()?.start_providing(&cid).await
+        let cs = self.client.store.clone().unwrap().get();
+        cs.put(cid, blob, links).await?;
+        let cp = self.client.p2p.clone().unwrap().get();
+        cp.start_providing(&cid).await
     }
 }
 

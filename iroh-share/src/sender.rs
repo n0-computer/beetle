@@ -61,8 +61,8 @@ impl Sender {
 
         let (done_sender, done_receiver) = oneshot();
 
-        let p2p_rpc = p2p.rpc().try_p2p()?;
-        let store = p2p.rpc().try_store()?;
+        let p2p_rpc = p2p.rpc().clone().try_p2p()?;
+        let store = p2p.rpc().clone().try_store()?;
         let (root, num_parts) = {
             let parts = root_dir.encode();
             tokio::pin!(parts);

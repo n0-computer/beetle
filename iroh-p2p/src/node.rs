@@ -320,7 +320,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         InboundRequest::Want { cid, sender, .. } => {
                             info!("bitswap want {}", cid);
                             if let Some(rpc_store) = self.rpc_client.store.as_ref() {
-                                match rpc_store.get(cid).await {
+                                match rpc_store.clone().get().get(cid).await {
                                     Ok(Some(data)) => {
                                         trace!("Found data for: {}", cid);
                                         if let Err(e) = self
@@ -846,7 +846,7 @@ mod tests {
             let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
                 .parse()
                 .unwrap();
-            let providers = client.p2p.unwrap().fetch_providers(&c).await?;
+            let providers = client.p2p.unwrap().clone().get().fetch_providers(&c).await?;
             assert!(!providers.is_empty());
             assert!(providers.len() >= PROVIDER_LIMIT);
         }
