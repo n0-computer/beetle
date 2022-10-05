@@ -118,9 +118,9 @@ fn init_tracer(cfg: Config) -> Result<Option<JoinHandle<()>>, Box<dyn std::error
                 .with_env_filter(EnvFilter::from_default_env())
                 .with_writer(non_blocking)
                 .init();
-             loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-             }
+            //  loop {
+            //     tokio::time::sleep(Duration::from_secs(5)).await;
+            //  }
         })));
     } else {
         let log_subscriber = fmt::layer()
