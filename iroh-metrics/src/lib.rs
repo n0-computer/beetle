@@ -63,10 +63,10 @@ impl MetricsHandle {
 
     /// Initialize the tracing and metrics subsystems.
     pub async fn new(cfg: Config) -> Result<Self, Box<dyn std::error::Error>> {
-        let tracer_task = init_tracer(cfg.clone())?;
+        // let tracer_task = init_tracer(cfg.clone())?;
         let metrics_task = init_metrics(cfg).await;
         Ok(MetricsHandle {
-            tracer_task,
+            tracer_task: None,
             metrics_task,
         })
     }
