@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+
 use anyhow::{anyhow, Context, Result};
 #[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
@@ -18,13 +21,15 @@ pub struct Client {
 #[derive(Debug, Clone)]
 pub struct StoreLBClient {
     clients: Vec<StoreClient>,
+    pos: Arc<AtomicUsize>,
 }
 
 impl StoreLBClient {
     pub fn get(&mut self) -> StoreClient {
-        let mut rng = rand::thread_rng();
-        let i: usize = rng.gen_range(0..=self.clients.len());
+        let i = self.pos.load(std::sync::atomic::Ordering::Relaxed);
         let c = self.clients.get(i).unwrap();
+        self.pos
+            .store((i + 1) % self.clients.len(), std::sync::atomic::Ordering::Relaxed);
         c.clone()
     }
 }
@@ -32,13 +37,15 @@ impl StoreLBClient {
 #[derive(Debug, Clone)]
 pub struct P2pLBClient {
     clients: Vec<P2pClient>,
+    pos: Arc<AtomicUsize>,
 }
 
 impl P2pLBClient {
     pub fn get(&mut self) -> P2pClient {
-        let mut rng = rand::thread_rng();
-        let i: usize = rng.gen_range(0..=self.clients.len());
+        let i = self.pos.load(std::sync::atomic::Ordering::Relaxed);
         let c = self.clients.get(i).unwrap();
+        self.pos
+            .store((i + 1) % self.clients.len(), std::sync::atomic::Ordering::Relaxed);
         c.clone()
     }
 }
@@ -62,7 +69,7 @@ impl Client {
         };
 
         let p2p = if let Some(addr) = p2p_addr {
-            let mut slb = P2pLBClient { clients: vec![] };
+            let mut slb = P2pLBClient { clients: vec![], pos: Arc::new(AtomicUsize::new(0))};
             for i in 0..16 {
                 let sc = P2pClient::new(addr.clone())
                     .await
@@ -74,7 +81,7 @@ impl Client {
             None
         };
         let store = if let Some(addr) = store_addr {
-            let mut slb = StoreLBClient { clients: vec![] };
+            let mut slb = StoreLBClient { clients: vec![], pos: Arc::new(AtomicUsize::new(0))};
             for i in 0..16 {
                 let sc = StoreClient::new(addr.clone())
                     .await
