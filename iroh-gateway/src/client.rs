@@ -15,7 +15,7 @@ use iroh_resolver::resolver::{
 };
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
-use log::{info, warn};
+use tracing::{info, warn};
 
 use crate::handlers::GetParams;
 use crate::response::ResponseFormat;
