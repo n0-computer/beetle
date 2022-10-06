@@ -46,7 +46,6 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 
 pub struct MetricsHandle {
     metrics_task: Option<JoinHandle<()>>,
-    tracer_task: Option<JoinHandle<()>>,
 }
 
 impl MetricsHandle {
@@ -56,19 +55,13 @@ impl MetricsHandle {
         if let Some(mt) = &self.metrics_task {
             mt.abort();
         }
-        if let Some(tt) = &self.tracer_task {
-            tt.abort();
-        }
     }
 
     /// Initialize the tracing and metrics subsystems.
     pub async fn new(cfg: Config) -> Result<Self, Box<dyn std::error::Error>> {
-        let tracer_task = init_tracer(cfg.clone())?;
+        init_tracer(cfg.clone())?;
         let metrics_task = init_metrics(cfg).await;
-        Ok(MetricsHandle {
-            tracer_task: None,
-            metrics_task,
-        })
+        Ok(MetricsHandle { metrics_task })
     }
 }
 
@@ -109,21 +102,13 @@ async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
 }
 
 /// Initialize the tracing subsystem.
-fn init_tracer(cfg: Config) -> Result<Option<JoinHandle<()>>, Box<dyn std::error::Error>> {
+fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
+    let log_subscriber = fmt::layer()
+        .pretty()
+        .with_filter(EnvFilter::from_default_env());
     if !cfg.tracing {
-        return Ok(Some(tokio::spawn(async move {
-            let (non_blocking, _guard) = tracing_appender::non_blocking(std::io::stdout());
-            tracing_subscriber::fmt()
-                .pretty()
-                .with_env_filter(EnvFilter::from_default_env())
-                .with_writer(non_blocking)
-                .init();
-            iroh_util::block_until_sigint().await;
-        })));
+        tracing_subscriber::registry().with(log_subscriber).init();
     } else {
-        let log_subscriber = fmt::layer()
-            .pretty()
-            .with_filter(EnvFilter::from_default_env());
         global::set_text_map_propagator(TraceContextPropagator::new());
         let exporter = opentelemetry_otlp::new_exporter()
             .tonic()
@@ -150,7 +135,7 @@ fn init_tracer(cfg: Config) -> Result<Option<JoinHandle<()>>, Box<dyn std::error
             .with(opentelemetry)
             .try_init()?;
     }
-    Ok(None)
+    Ok(())
 }
 
 pub fn get_current_trace_id() -> TraceId {
