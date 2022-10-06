@@ -21,15 +21,13 @@ pub struct Client {
 #[derive(Debug, Clone)]
 pub struct StoreLBClient {
     clients: Vec<StoreClient>,
-    pos: Arc<AtomicUsize>,
+    pos: usize,
 }
 
 impl StoreLBClient {
     pub fn get(&mut self) -> StoreClient {
-        let i = self.pos.load(std::sync::atomic::Ordering::Relaxed);
-        let c = self.clients.get(i).unwrap();
-        self.pos
-            .store((i + 1) % self.clients.len(), std::sync::atomic::Ordering::Relaxed);
+        let c = self.clients.get(self.pos).unwrap();
+        self.pos = (self.pos + 1) % self.clients.len();
         c.clone()
     }
 }
@@ -37,15 +35,13 @@ impl StoreLBClient {
 #[derive(Debug, Clone)]
 pub struct P2pLBClient {
     clients: Vec<P2pClient>,
-    pos: Arc<AtomicUsize>,
+    pos: usize,
 }
 
 impl P2pLBClient {
     pub fn get(&mut self) -> P2pClient {
-        let i = self.pos.load(std::sync::atomic::Ordering::Relaxed);
-        let c = self.clients.get(i).unwrap();
-        self.pos
-            .store((i + 1) % self.clients.len(), std::sync::atomic::Ordering::Relaxed);
+        let c = self.clients.get(self.pos).unwrap();
+        self.pos = (self.pos + 1) % self.clients.len();
         c.clone()
     }
 }
@@ -69,7 +65,7 @@ impl Client {
         };
 
         let p2p = if let Some(addr) = p2p_addr {
-            let mut slb = P2pLBClient { clients: vec![], pos: Arc::new(AtomicUsize::new(0))};
+            let mut slb = P2pLBClient { clients: vec![], pos: 0};
             for i in 0..32 {
                 let sc = P2pClient::new(addr.clone())
                     .await
@@ -81,7 +77,7 @@ impl Client {
             None
         };
         let store = if let Some(addr) = store_addr {
-            let mut slb = StoreLBClient { clients: vec![], pos: Arc::new(AtomicUsize::new(0))};
+            let mut slb = StoreLBClient { clients: vec![], pos: 0};
             for i in 0..32 {
                 let sc = StoreClient::new(addr.clone())
                     .await
