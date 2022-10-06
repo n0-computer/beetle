@@ -1,9 +1,9 @@
 use cid::Cid;
+use log::{error, debug};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
-use tracing::{debug, log::error};
 
 const BAD_BITS_UPDATE_INTERVAL: Duration = Duration::from_secs(3600 * 8);
 const DEFAULT_DENY_LIST_URI: &str = "http://badbits.dwebops.pub/denylist.json";

@@ -12,7 +12,7 @@ use iroh_gateway::{
 use iroh_rpc_client::Client as RpcClient;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
-use tracing::{debug, error};
+use log::{error, debug};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
