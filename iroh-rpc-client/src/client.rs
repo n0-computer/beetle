@@ -70,7 +70,7 @@ impl Client {
 
         let p2p = if let Some(addr) = p2p_addr {
             let mut slb = P2pLBClient { clients: vec![], pos: Arc::new(AtomicUsize::new(0))};
-            for i in 0..32 {
+            for i in 0..64 {
                 let sc = P2pClient::new(addr.clone())
                     .await
                     .context("Could not create store rpc client")?;
@@ -82,7 +82,7 @@ impl Client {
         };
         let store = if let Some(addr) = store_addr {
             let mut slb = StoreLBClient { clients: vec![], pos: Arc::new(AtomicUsize::new(0))};
-            for i in 0..32 {
+            for i in 0..64 {
                 let sc = StoreClient::new(addr.clone())
                     .await
                     .context("Could not create store rpc client")?;
