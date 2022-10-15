@@ -104,7 +104,7 @@ impl Network {
         timeout: Duration,
         backoff: Duration,
     ) -> Result<()> {
-        info!("send:{}: start: {:#?}", peer, message);
+        println!("send:{}: start: {:#?}", peer, message);
         inc!(BitswapMetrics::MessagesAttempted);
 
         let num_blocks = message.blocks().count();

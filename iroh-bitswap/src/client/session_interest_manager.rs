@@ -21,6 +21,18 @@ pub struct SessionInterestManager {
 }
 
 impl SessionInterestManager {
+    pub async fn interests_for_session(&self, session: u64) -> Vec<(Cid, bool)> {
+        let wants = &*self.wants.read().await;
+        let mut out = Vec::new();
+        for (cid, sessions) in wants {
+            if let Some(wanted) = sessions.get(&session) {
+                out.push((*cid, *wanted));
+            }
+        }
+
+        out
+    }
+
     /// When the client asks the session for blocks, the session calls this methods.
     pub async fn record_session_interest(&self, session: u64, keys: &[Cid]) {
         debug!("session:{} record_session_interest: {:?}", session, keys);

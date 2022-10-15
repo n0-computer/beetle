@@ -85,9 +85,6 @@ impl AllWants {
     }
 }
 
-// type onSendFn func(to peer.ID, wantBlocks []cid.Cid, wantHaves []cid.Cid)
-// type onPeersExhaustedFn func([]cid.Cid)
-
 /// Responsible for sending want-have and want-block to
 /// peers. For each want, it sends a single optimistic want-block request to
 /// one peer and want-have requests to all other peers in the session.
@@ -163,6 +160,7 @@ impl SessionWantSender {
         let worker = rt.spawn(async move {
             // The main loop for processing incoming changes
             loop {
+                loop_state.print().await;
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {
@@ -300,6 +298,7 @@ impl WantInfo {
         } else {
             BlockPresence::Unknown
         };
+        println!("sws: update want for PeerId({}) {}: {:?}", peer, cid, info);
         self.set_peer_block_presence(peer, info).await;
     }
 
@@ -420,6 +419,66 @@ impl LoopState {
         }
     }
 
+    async fn print(&self) {
+        println!(
+            r#"
+SessionWantSender: {}
+=====================
+
+Wants
+-----
+{}
+
+BlockPresenceManager
+--------------------
+{}
+"#,
+            self.signaler.id,
+            self.wants
+                .iter()
+                .map(|(cid, info)| {
+                    format!(
+                        r#"
+- {}:
+  - block presence:
+{}    
+  - sent to: {:?}
+  - best peer: {:?}
+  - exhausted: {}
+"#,
+                        cid,
+                        info.block_presence
+                            .iter()
+                            .map(|(peer, bp)| format!("    - PeerId({}): {:?}", peer, bp))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        info.sent_to.map(|p| p.to_string()),
+                        info.best_peer.map(|p| p.to_string()),
+                        info.exhausted,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            self.block_presence_manager
+                .presences()
+                .await
+                .into_iter()
+                .map(|(cid, list)| {
+                    format!(
+                        "- {}:\n{}",
+                        cid,
+                        list.into_iter()
+                            .map(|(peer, presence)| {
+                                format!("  - PeerId({}): {}", peer, presence)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
     async fn stop(self) -> Result<()> {
         // Unregister the session with the PeerManager
         self.peer_manager.unregister_session(self.signaler.id).await;
@@ -448,7 +507,7 @@ impl LoopState {
         // so pop all outstanding changes from the channel
         let mut changes = vec![change];
         self.collect_changes(&mut changes);
-        debug!("handling changes: {:?}", changes);
+        println!("handling changes: {:?}", changes);
 
         // Apply each change
 
@@ -770,7 +829,7 @@ impl LoopState {
 
     /// Sends wants to peers according to the latest information about which peers have / dont have blocks.
     async fn send_next_wants(&mut self, newly_available: Vec<PeerId>) {
-        debug!(
+        println!(
             "send_next_wants: newly_available ({})",
             newly_available.len()
         );
@@ -788,7 +847,7 @@ impl LoopState {
             }
 
             if let Some(ref best_peer) = wi.best_peer {
-                debug!("sending want for {} to: {}", cid, best_peer);
+                println!("preparing sending want for {} to: {}", cid, best_peer);
                 // Record that we are sending a want-block for this want to the peer
                 wi.sent_to = Some(*best_peer);
 
@@ -798,7 +857,7 @@ impl LoopState {
                 // Send a want-have to each other peer.
                 for op in self.session_peer_manager.peers().await {
                     if &op != best_peer {
-                        debug!("sending want_have for {} to: {}", cid, op);
+                        println!("preparing sending want_have for {} to: {}", cid, op);
                         to_send.for_peer(&op).want_haves.insert(*cid);
                     }
                 }
@@ -816,7 +875,7 @@ impl LoopState {
     async fn send_wants(&mut self, sends: AllWants) {
         // For each peer we're sending a request to
         for (peer, mut snd) in sends.0 {
-            debug!("send_wants to {}: {:?}", peer, snd);
+            println!("send_wants to {}: {:?}", peer, snd);
             // Piggyback some other want-haves onto the request to the peer.
             for cid in self.get_piggyback_want_haves(&peer, &snd.want_blocks) {
                 snd.want_haves.insert(cid);

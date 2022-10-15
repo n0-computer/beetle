@@ -181,8 +181,8 @@ impl PeerManager {
     /// Sends the given want-blocks and want-haves to the given peer.
     /// It filters out wants that have been previously sent to the peer.
     pub async fn send_wants(&self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
-        debug!(
-            "send_wants to {}: {:?}, {:?}",
+        println!(
+            "pm: send_wants to {}: {:?}, {:?}",
             peer, want_blocks, want_haves
         );
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
@@ -223,6 +223,18 @@ impl PeerManager {
         }
 
         peer_sessions.entry(*peer).or_default().insert(id);
+    }
+
+    pub async fn peers_for_session(&self, session_id: u64) -> Vec<PeerId> {
+        let (_, peer_sessions) = &*self.inner.sessions.read().await;
+        let mut out = Vec::new();
+        for (peer, sessions) in peer_sessions {
+            if sessions.contains(&session_id) {
+                out.push(*peer);
+            }
+        }
+
+        out
     }
 
     pub async fn unregister_session(&self, session_id: u64) {

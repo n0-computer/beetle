@@ -1,4 +1,4 @@
-use std::{ops::Deref, sync::Arc};
+use std::{fmt::Display, ops::Deref, sync::Arc};
 
 use ahash::AHashMap;
 use cid::Cid;
@@ -11,6 +11,23 @@ pub struct Wantlist {
     set: AHashMap<Cid, Entry>,
     /// Sorted version of the entires in `set`.
     cached: Vec<Entry>,
+}
+
+impl Display for Wantlist {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            r#"
+Wantlist:
+{}
+"#,
+            self.set
+                .iter()
+                .map(|(c, e)| format!("- {}: {}", c, e))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
 }
 
 impl Wantlist {
@@ -114,6 +131,16 @@ impl Wantlist {
 /// An entry in a wantlist.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry(Arc<InnerEntry>);
+
+impl Display for Entry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Entry: {}, prio: {}, want: {:?}",
+            self.cid, self.priority, self.want_type
+        )
+    }
+}
 
 impl Deref for Entry {
     type Target = InnerEntry;

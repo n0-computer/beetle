@@ -115,6 +115,7 @@ impl Session {
 
             loop {
                 debug!("session {} tick", loop_state.id);
+                loop_state.print().await;
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {
@@ -406,6 +407,56 @@ impl LoopState {
             workers: Vec::new(),
             incoming,
         }
+    }
+
+    /// Print status of the current session.
+    async fn print(&self) {
+        println!(
+            r#"
+Session: {}
+===========
+
+SessionWants
+------------
+{}
+
+SessionInterestManager
+----------------------
+{}
+
+SessionPeerManager
+------------------
+{}
+
+PeerManager
+-----------
+{}
+
+"#,
+            self.id,
+            self.session_wants,
+            self.session_interest_manager
+                .interests_for_session(self.id)
+                .await
+                .into_iter()
+                .map(|(cid, wanted)| format!("- {}: {}", cid, wanted))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            self.session_peer_manager
+                .peers()
+                .await
+                .into_iter()
+                .map(|peer| format!("- PeerId({})", peer))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            self.peer_manager
+                .peers_for_session(self.id)
+                .await
+                .into_iter()
+                .map(|peer| format!("- PeerId({})", peer))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
     }
 
     async fn stop(mut self) -> Result<()> {

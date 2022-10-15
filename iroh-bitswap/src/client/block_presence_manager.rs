@@ -17,8 +17,23 @@ impl BlockPresenceManager {
         }
     }
 
+    pub async fn presences(&self) -> Vec<(Cid, AHashMap<PeerId, bool>)> {
+        self.presence
+            .read()
+            .await
+            .iter()
+            .map(|(cid, list)| (*cid, list.clone()))
+            .collect()
+    }
+
     /// Called when a peer sends us information about which blocks it has and does not have.
     pub async fn receive_from(&self, peer: &PeerId, haves: &[Cid], dont_haves: &[Cid]) {
+        println!(
+            "bpm: receive from {}: \nHaves: {:?}\nDontHaves: {:?}",
+            peer,
+            haves.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            dont_haves.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+        );
         let presence = &mut *self.presence.write().await;
 
         for key in haves {

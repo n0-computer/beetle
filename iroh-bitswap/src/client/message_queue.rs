@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -61,10 +62,40 @@ pub(crate) struct Wants {
     pub(crate) priority: i32,
 }
 
+impl Display for Wants {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            r#"
+Wants:
+- broadcast wants:
+{}
+- peer wants:
+{}
+- cancels:
+{}
+- priority: {}
+"#,
+            self.bcst_wants,
+            self.peer_wants,
+            self.cancels
+                .iter()
+                .map(|c| format!("  - {}", c))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            self.priority
+        )
+    }
+}
+
 impl Wants {
     /// Wether there is work to be processed.
     fn has_pending_work(&self) -> bool {
         self.pending_work_count() > 0
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bcst_wants.is_empty() && self.peer_wants.is_empty() && self.cancels.is_empty()
     }
 
     /// The amount of work that is waiting to be processed.
@@ -83,7 +114,35 @@ pub(crate) struct RecallWantlist {
     pub(crate) sent_at: AHashMap<Cid, Instant>,
 }
 
+impl Display for RecallWantlist {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            r#"
+RecallWantlist:
+- pending:
+{}
+- sent:
+{}
+- sent_at:
+{}
+"#,
+            self.pending,
+            self.sent,
+            self.sent_at
+                .iter()
+                .map(|(c, t)| format!("  - {}: {:?}", c, t))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
+}
+
 impl RecallWantlist {
+    fn is_empty(&self) -> bool {
+        self.pending.is_empty() && self.sent.is_empty() && self.sent_at.is_empty()
+    }
+
     /// Adds a want to the pending list.
     fn add(&mut self, cid: Cid, priority: Priority, want_type: WantType) {
         self.pending.add(cid, priority, want_type);
@@ -233,6 +292,7 @@ impl MessageQueue {
             );
 
             loop {
+                loop_state.print().await;
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {
@@ -445,12 +505,29 @@ impl LoopState {
         }
     }
 
+    async fn print(&self) {
+        if !self.wants.is_empty() {
+            println!(
+                r#"
+MessageQueue PeerId({}):
+========================
+
+Wants
+-----
+{}
+"#,
+                self.peer, self.wants,
+            );
+        }
+    }
+
     async fn stop(self) -> Result<()> {
         self.dh_timeout_manager.stop().await?;
         Ok(())
     }
 
     async fn handle_wants_update(&mut self, wants_update: WantsUpdate) {
+        println!("mg handle_wants_update: {:?}", wants_update);
         match wants_update {
             WantsUpdate::AddBroadcastWantHaves(want_haves) => {
                 for cid in want_haves {
@@ -765,7 +842,7 @@ impl LoopState {
                 } else {
                     WantType::Block
                 };
-                msg_size += msg.add_entry(entry.cid, entry.priority, want_type, false);
+                msg_size += msg.add_entry(entry.cid, entry.priority, want_type, true);
                 sent_bcst_entries += 1;
 
                 if msg_size >= self.max_message_size {
