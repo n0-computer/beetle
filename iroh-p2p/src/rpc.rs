@@ -19,7 +19,7 @@ use libp2p::PeerId;
 use tarpc::context::Context;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
-use tracing::trace;
+use tracing::{debug, trace};
 
 // use super::node::DEFAULT_PROVIDER_LIMIT;
 
@@ -121,6 +121,17 @@ impl RpcP2p for P2p {
     }
 
     async fn stop_session_bitswap(self, _ctx: Context, context_id: u64) -> Result<(), RpcError> {
+        struct Guard {
+            context_id: u64,
+        }
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                debug!("stop session drop guard {}", self.context_id);
+            }
+        }
+        debug!("stop session bitswap {}", context_id);
+        let _guard = Guard { context_id };
+
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapStopSession {
             ctx: context_id,
@@ -131,6 +142,7 @@ impl RpcP2p for P2p {
         r.await
             .map_err(RpcError::from_any)?
             .context("stop session")?;
+        debug!("stop session bitwap {} done", context_id);
 
         Ok(())
     }
