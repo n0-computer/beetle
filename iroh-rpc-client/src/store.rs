@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime};
+
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
 use cid::Cid;
@@ -5,27 +7,35 @@ use tarpc::context::Context;
 
 impl_client!(Store);
 
+const DEFAULT_DEADLINE: Duration = Duration::from_secs(60);
+
+fn default_context() -> Context {
+    let mut ctx = Context::current();
+    ctx.deadline = SystemTime::now() + DEFAULT_DEADLINE;
+    ctx
+}
+
 impl StoreClient {
     pub async fn version(&self) -> Result<String> {
-        let res = self.backend().await?.version(Context::current()).await??;
+        let res = self.backend().await?.version(default_context()).await??;
         Ok(res)
     }
 
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         self.backend()
             .await?
-            .put(Context::current(), cid, blob, links)
+            .put(default_context(), cid, blob, links)
             .await??;
         Ok(())
     }
 
     pub async fn get(&self, cid: Cid) -> Result<Option<BytesMut>> {
-        let res = self.backend().await?.get(Context::current(), cid).await??;
+        let res = self.backend().await?.get(default_context(), cid).await??;
         Ok(res)
     }
 
     pub async fn has(&self, cid: Cid) -> Result<bool> {
-        let res = self.backend().await?.has(Context::current(), cid).await??;
+        let res = self.backend().await?.has(default_context(), cid).await??;
         Ok(res)
     }
 
@@ -33,7 +43,7 @@ impl StoreClient {
         let links = self
             .backend()
             .await?
-            .get_links(Context::current(), cid)
+            .get_links(default_context(), cid)
             .await??;
 
         if links.is_empty() {
@@ -47,7 +57,7 @@ impl StoreClient {
         let size = self
             .backend()
             .await?
-            .get_size(Context::current(), cid)
+            .get_size(default_context(), cid)
             .await??;
         Ok(size)
     }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{ensure, Result};
 use bytes::Bytes;
@@ -14,9 +15,17 @@ use tracing::{debug, warn};
 
 impl_client!(P2p);
 
+const DEFAULT_DEADLINE: Duration = Duration::from_secs(60);
+
+fn default_context() -> Context {
+    let mut ctx = Context::current();
+    ctx.deadline = SystemTime::now() + DEFAULT_DEADLINE;
+    ctx
+}
+
 impl P2pClient {
     pub async fn version(&self) -> Result<String> {
-        let version = self.backend().await?.version(Context::current()).await??;
+        let version = self.backend().await?.version(default_context()).await??;
         Ok(version)
     }
 
@@ -24,7 +33,7 @@ impl P2pClient {
         let peer_id = self
             .backend()
             .await?
-            .local_peer_id(Context::current())
+            .local_peer_id(default_context())
             .await??;
         Ok(peer_id)
     }
@@ -34,7 +43,7 @@ impl P2pClient {
         let addrs = self
             .backend()
             .await?
-            .external_addrs(Context::current())
+            .external_addrs(default_context())
             .await??;
         Ok(addrs)
     }
@@ -50,12 +59,7 @@ impl P2pClient {
         let bytes = self
             .backend()
             .await?
-            .fetch_bitswap(
-                Context::current(),
-                ctx,
-                cid,
-                providers.into_iter().collect(),
-            )
+            .fetch_bitswap(default_context(), ctx, cid, providers.into_iter().collect())
             .await??;
         Ok(bytes)
     }
@@ -63,7 +67,7 @@ impl P2pClient {
     pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<()> {
         self.backend()
             .await?
-            .stop_session_bitswap(Context::current(), ctx)
+            .stop_session_bitswap(default_context(), ctx)
             .await??;
         Ok(())
     }
@@ -71,7 +75,7 @@ impl P2pClient {
     pub async fn notify_new_blocks_bitswap(&self, blocks: Vec<(Cid, Bytes)>) -> Result<()> {
         self.backend()
             .await?
-            .notify_new_blocks_bitswap(Context::current(), blocks)
+            .notify_new_blocks_bitswap(default_context(), blocks)
             .await??;
         Ok(())
     }
@@ -98,7 +102,7 @@ impl P2pClient {
         let key = key.hash().to_bytes();
         self.backend()
             .await?
-            .start_providing(Context::current(), key)
+            .start_providing(default_context(), key)
             .await??;
         Ok(())
     }
@@ -107,7 +111,7 @@ impl P2pClient {
         let key = key.hash().to_bytes();
         self.backend()
             .await?
-            .stop_providing(Context::current(), key)
+            .stop_providing(default_context(), key)
             .await??;
         Ok(())
     }
@@ -116,18 +120,14 @@ impl P2pClient {
         let res = self
             .backend()
             .await?
-            .get_listening_addrs(Context::current())
+            .get_listening_addrs(default_context())
             .await??;
 
         Ok(res)
     }
 
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        let peers = self
-            .backend()
-            .await?
-            .get_peers(Context::current())
-            .await??;
+        let peers = self.backend().await?.get_peers(default_context()).await??;
         Ok(peers)
     }
 
@@ -135,7 +135,7 @@ impl P2pClient {
         let res = self
             .backend()
             .await?
-            .peer_connect(Context::current(), peer_id, addrs)
+            .peer_connect(default_context(), peer_id, addrs)
             .await??;
         ensure!(res, "dial failed");
         Ok(())
@@ -145,20 +145,20 @@ impl P2pClient {
         warn!("NetDisconnect not yet implemented on p2p node");
         self.backend()
             .await?
-            .peer_disconnect(Context::current(), peer_id)
+            .peer_disconnect(default_context(), peer_id)
             .await??;
         Ok(())
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        self.backend().await?.shutdown(Context::current()).await??;
+        self.backend().await?.shutdown(default_context()).await??;
         Ok(())
     }
 
     pub async fn gossipsub_add_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
         self.backend()
             .await?
-            .gossipsub_add_explicit_peer(Context::current(), peer_id)
+            .gossipsub_add_explicit_peer(default_context(), peer_id)
             .await??;
         Ok(())
     }
@@ -167,7 +167,7 @@ impl P2pClient {
         let peer_ids = self
             .backend()
             .await?
-            .gossipsub_all_mesh_peers(Context::current())
+            .gossipsub_all_mesh_peers(default_context())
             .await??;
         Ok(peer_ids)
     }
@@ -176,7 +176,7 @@ impl P2pClient {
         let res = self
             .backend()
             .await?
-            .gossipsub_all_peers(Context::current())
+            .gossipsub_all_peers(default_context())
             .await??;
 
         let peers_and_topics = res
@@ -190,7 +190,7 @@ impl P2pClient {
         let peer_ids = self
             .backend()
             .await?
-            .gossipsub_mesh_peers(Context::current(), topic.into_string())
+            .gossipsub_mesh_peers(default_context(), topic.into_string())
             .await??;
         Ok(peer_ids)
     }
@@ -199,7 +199,7 @@ impl P2pClient {
         let res = self
             .backend()
             .await?
-            .gossipsub_publish(Context::current(), topic_hash.to_string(), data)
+            .gossipsub_publish(default_context(), topic_hash.to_string(), data)
             .await??;
         let message_id = MessageId::new(&res);
         Ok(message_id)
@@ -208,7 +208,7 @@ impl P2pClient {
     pub async fn gossipsub_remove_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
         self.backend()
             .await?
-            .gossipsub_remove_explicit_peer(Context::current(), peer_id)
+            .gossipsub_remove_explicit_peer(default_context(), peer_id)
             .await??;
         Ok(())
     }
@@ -217,7 +217,7 @@ impl P2pClient {
         let res = self
             .backend()
             .await?
-            .gossipsub_subscribe(Context::current(), topic.to_string())
+            .gossipsub_subscribe(default_context(), topic.to_string())
             .await??;
         Ok(res)
     }
@@ -226,7 +226,7 @@ impl P2pClient {
         let res = self
             .backend()
             .await?
-            .gossipsub_topics(Context::current())
+            .gossipsub_topics(default_context())
             .await??;
         let topics = res.into_iter().map(TopicHash::from_raw).collect();
         Ok(topics)
@@ -236,7 +236,7 @@ impl P2pClient {
         let res = self
             .backend()
             .await?
-            .gossipsub_unsubscribe(Context::current(), topic.to_string())
+            .gossipsub_unsubscribe(default_context(), topic.to_string())
             .await??;
         Ok(res)
     }
