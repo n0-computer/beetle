@@ -6,19 +6,31 @@ use std::{
 
 use anyhow::{anyhow, bail};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
-use tokio::sync::mpsc::{Receiver, Sender};
 
-#[derive(SerializeDisplay, DeserializeFromStr, Clone)]
-pub enum Addr<T = ()> {
+#[derive(SerializeDisplay, DeserializeFromStr)]
+pub enum Addr<Req = (), Resp = ()> {
     #[cfg(feature = "grpc")]
     GrpcHttp2(SocketAddr),
     #[cfg(all(feature = "grpc", unix))]
     GrpcUds(std::path::PathBuf),
     #[cfg(feature = "mem")]
-    Mem(T),
+    Mem(tarpc::transport::channel::Channel<Req, Resp>),
 }
 
-impl<T> PartialEq for Addr<T> {
+impl<Req, Resp> Clone for Addr<Req, Resp> {
+    fn clone(&self) -> Self {
+        match self {
+            #[cfg(feature = "grpc")]
+            Self::GrpcHttp2(addr) => Self::GrpcHttp2(addr.clone()),
+            #[cfg(all(feature = "grpc", unix))]
+            Self::GrpcUds(path) => Self::GrpcUds(path.clone()),
+            #[cfg(feature = "mem")]
+            Self::Mem(_) => panic!("can't clone mem addrs"),
+        }
+    }
+}
+
+impl<Req, Resp> PartialEq for Addr<Req, Resp> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             #[cfg(feature = "grpc")]
@@ -30,15 +42,15 @@ impl<T> PartialEq for Addr<T> {
     }
 }
 
-impl<T> Addr<T> {
-    pub fn new_mem() -> (Addr<Receiver<T>>, Addr<Sender<T>>) {
-        let (s, r) = tokio::sync::mpsc::channel(256);
+impl<Req, Resp> Addr<Req, Resp> {
+    pub fn new_mem() -> (Addr<Req, Resp>, Addr<Resp, Req>) {
+        let (s, r) = tarpc::transport::channel::bounded(256);
 
         (Addr::Mem(r), Addr::Mem(s))
     }
 }
 
-impl<T> Addr<T> {
+impl<Req, Resp> Addr<Req, Resp> {
     pub fn try_as_socket_addr(&self) -> Option<SocketAddr> {
         #[cfg(feature = "grpc")]
         if let Addr::GrpcHttp2(addr) = self {
@@ -48,7 +60,7 @@ impl<T> Addr<T> {
     }
 }
 
-impl<T> Display for Addr<T> {
+impl<Req, Resp> Display for Addr<Req, Resp> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             #[cfg(feature = "grpc")]
@@ -63,13 +75,13 @@ impl<T> Display for Addr<T> {
     }
 }
 
-impl<T> Debug for Addr<T> {
+impl<Req, Resp> Debug for Addr<Req, Resp> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }
 }
 
-impl<T> FromStr for Addr<T> {
+impl<Req, Resp> FromStr for Addr<Req, Resp> {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

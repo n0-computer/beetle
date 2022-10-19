@@ -1,11 +1,14 @@
-include_proto!("store");
+use bytes::{Bytes, BytesMut};
+use cid::Cid;
 
-proxy!(
-    Store,
-    version: () => VersionResponse => VersionResponse,
-    put: PutRequest => () => (),
-    get: GetRequest => GetResponse => GetResponse,
-    has: HasRequest => HasResponse => HasResponse,
-    get_links: GetLinksRequest => GetLinksResponse => GetLinksResponse,
-    get_size: GetSizeRequest => GetSizeResponse => GetSizeResponse
-);
+use crate::RpcError;
+
+#[tarpc::service]
+pub trait Store {
+    async fn version() -> Result<String, RpcError>;
+    async fn put(cid: Cid, bytes: Bytes, links: Vec<Cid>) -> Result<(), RpcError>;
+    async fn get(cid: Cid) -> Result<Option<BytesMut>, RpcError>;
+    async fn has(cid: Cid) -> Result<bool, RpcError>;
+    async fn get_links(cid: Cid) -> Result<Vec<Cid>, RpcError>;
+    async fn get_size(cid: Cid) -> Result<Option<u64>, RpcError>;
+}

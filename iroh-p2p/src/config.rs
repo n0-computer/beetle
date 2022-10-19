@@ -3,14 +3,13 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::{
-    p2p::{P2pClientAddr, P2pServerAddr},
-    Addr,
-};
+use iroh_rpc_client::{network::P2pClientAddr, Config as RpcClientConfig};
+use iroh_rpc_types::Addr;
 use iroh_util::{insert_into_config_map, iroh_data_root};
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
+
+use crate::rpc::P2pServerAddr;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "p2p.config.toml";

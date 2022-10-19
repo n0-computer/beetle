@@ -7,7 +7,6 @@ use cid::Cid;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
-use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
@@ -31,6 +30,7 @@ use tracing::{debug, error, info, trace, warn};
 use iroh_bitswap::{BitswapEvent, Block};
 
 use crate::keys::{Keychain, Storage};
+use crate::rpc::P2pServerAddr;
 use crate::rpc::ProviderRequestKey;
 use crate::swarm::build_swarm;
 use crate::{
@@ -124,7 +124,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
         let rpc_task = tokio::task::spawn(async move {
             // TODO: handle error
-            rpc::new(rpc_addr, network_sender_in).await.unwrap()
+            rpc::serve(rpc_addr, network_sender_in.into())
+                .await
+                .unwrap()
         });
 
         let rpc_client = RpcClient::new(rpc_client)
@@ -879,10 +881,8 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
-    use iroh_rpc_types::{
-        p2p::{P2pClientAddr, P2pServerAddr},
-        Addr,
-    };
+    use iroh_rpc_client::network::P2pClientAddr;
+    use iroh_rpc_types::Addr;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     #[cfg(feature = "rpc-grpc")]
@@ -902,6 +902,8 @@ mod tests {
     #[cfg(all(feature = "rpc-grpc", unix))]
     #[tokio::test]
     async fn test_fetch_providers_uds_dht() -> Result<()> {
+        use iroh_rpc_client::network::P2pClientAddr;
+
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("cool.iroh");
 
@@ -957,31 +959,32 @@ mod tests {
             // Make sure we are bootstrapped.
             tokio::time::sleep(Duration::from_millis(2500)).await;
             let client = RpcClient::new(cfg).await?;
-            let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
-                .parse()
-                .unwrap();
+            // let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
+            //     .parse()
+            //     .unwrap();
 
-            let mut providers = Vec::new();
-            let mut chan = client.p2p.unwrap().fetch_providers_dht(&c).await?;
-            while let Some(new_providers) = chan.next().await {
-                let new_providers = new_providers.unwrap();
-                println!("providers found");
-                assert!(!new_providers.is_empty());
+            todo!()
+            // let mut providers = Vec::new();
+            // let mut chan = client.p2p.unwrap().fetch_providers_dht(&c).await?;
+            // while let Some(new_providers) = chan.next().await {
+            //     let new_providers = new_providers.unwrap();
+            //     println!("providers found");
+            //     assert!(!new_providers.is_empty());
 
-                for p in &new_providers {
-                    println!("{}", p);
-                    providers.push(*p);
-                }
-            }
+            //     for p in &new_providers {
+            //         println!("{}", p);
+            //         providers.push(*p);
+            //     }
+            // }
 
-            println!("{:?}", providers);
-            assert!(!providers.is_empty());
-            assert!(
-                providers.len() >= DEFAULT_PROVIDER_LIMIT,
-                "{} < {}",
-                providers.len(),
-                DEFAULT_PROVIDER_LIMIT
-            );
+            // println!("{:?}", providers);
+            // assert!(!providers.is_empty());
+            // assert!(
+            //     providers.len() >= DEFAULT_PROVIDER_LIMIT,
+            //     "{} < {}",
+            //     providers.len(),
+            //     DEFAULT_PROVIDER_LIMIT
+            // );
         };
 
         p2p_task.abort();

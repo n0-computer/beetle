@@ -7,9 +7,11 @@ use headers::{
 };
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
+use iroh_rpc_types::Addr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
+
+use crate::rpc::GatewayServerAddr;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "gateway.config.toml";
@@ -29,7 +31,7 @@ pub struct Config {
     /// flag to toggle whether the gateway should use denylist on requests
     pub denylist: bool,
     /// rpc addresses for the gateway & addresses for the rpc client to dial
-    pub rpc_client: RpcClientConfig,
+    pub rpc_client: Option<RpcClientConfig>,
     /// metrics configuration
     pub metrics: MetricsConfig,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
@@ -45,7 +47,7 @@ impl Config {
             public_url_base: String::new(),
             headers: HeaderMap::new(),
             port,
-            rpc_client,
+            rpc_client: Some(rpc_client),
             metrics: MetricsConfig::default(),
             denylist: false,
         }
@@ -58,8 +60,8 @@ impl Config {
     /// Derive server addr for non memory addrs.
     pub fn server_rpc_addr(&self) -> Result<Option<GatewayServerAddr>> {
         self.rpc_client
-            .gateway_addr
             .as_ref()
+            .and_then(|c| c.gateway_addr.as_ref())
             .map(|addr| {
                 #[allow(unreachable_patterns)]
                 match addr {
@@ -112,7 +114,7 @@ impl Default for Config {
             public_url_base: String::new(),
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
-            rpc_client,
+            rpc_client: Some(rpc_client),
             metrics: MetricsConfig::default(),
             denylist: false,
         };
@@ -127,7 +129,6 @@ impl Source for Config {
     }
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
         insert_into_config_map(&mut map, "public_url_base", self.public_url_base.clone());
         insert_into_config_map(&mut map, "denylist", self.denylist);
@@ -135,7 +136,10 @@ impl Source for Config {
         // an signed int fixes the issue
         insert_into_config_map(&mut map, "port", self.port as i32);
         insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
-        insert_into_config_map(&mut map, "rpc_client", rpc_client);
+        if let Some(ref rpc) = self.rpc_client {
+            let rpc_client = rpc.collect()?;
+            insert_into_config_map(&mut map, "rpc_client", rpc_client);
+        }
         let metrics = self.metrics.collect()?;
         insert_into_config_map(&mut map, "metrics", metrics);
         Ok(map)
@@ -143,8 +147,8 @@ impl Source for Config {
 }
 
 impl crate::handlers::StateConfig for Config {
-    fn rpc_client(&self) -> &iroh_rpc_client::Config {
-        &self.rpc_client
+    fn take_rpc_client(&mut self) -> Option<iroh_rpc_client::Config> {
+        self.rpc_client.take()
     }
 
     fn public_url_base(&self) -> &str {
@@ -205,10 +209,12 @@ mod tests {
             "headers".to_string(),
             Value::new(None, collect_headers(&default.headers).unwrap()),
         );
-        expect.insert(
-            "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
-        );
+        if let Some(ref rpc) = default.rpc_client {
+            expect.insert(
+                "rpc_client".to_string(),
+                Value::new(None, rpc.collect().unwrap()),
+            );
+        }
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),

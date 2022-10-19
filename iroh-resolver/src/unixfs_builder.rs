@@ -509,7 +509,7 @@ pub struct StoreAndProvideClient<'a> {
 impl<'a> Store for &StoreAndProvideClient<'a> {
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         self.client.try_store()?.put(cid, blob, links).await?;
-        self.client.try_p2p()?.start_providing(&cid).await
+        self.client.try_p2p()?.start_providing(cid).await
     }
 }
 

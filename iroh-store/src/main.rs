@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
         Store::create(config).await?
     };
 
-    let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
+    let rpc_task = tokio::spawn(async move { rpc::serve(rpc_addr, store.into()).await.unwrap() });
 
     block_until_sigint().await;
     rpc_task.abort();

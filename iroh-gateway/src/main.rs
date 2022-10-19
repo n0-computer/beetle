@@ -7,6 +7,7 @@ use iroh_gateway::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
+    handlers::StateConfig,
     metrics,
 };
 use iroh_rpc_client::Client as RpcClient;
@@ -42,7 +43,12 @@ async fn main() -> Result<()> {
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
+    let content_loader = RpcClient::new(
+        config
+            .take_rpc_client()
+            .expect("missing rpc client configuration"),
+    )
+    .await?;
     let handler = Core::new(
         Arc::new(config),
         rpc_addr,

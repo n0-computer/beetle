@@ -1,7 +1,8 @@
 use config::{ConfigError, Map, Source, Value};
-use iroh_rpc_types::{gateway::GatewayClientAddr, p2p::P2pClientAddr, store::StoreClientAddr};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
+
+use crate::{gateway::GatewayClientAddr, network::P2pClientAddr, store::StoreClientAddr};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 // Config for the rpc Client
