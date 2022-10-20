@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     let config_data_path = config_data_path(args.path.clone())?;
     let config = make_config(
         // default
-        Config::new_grpc(config_data_path),
+        Config::new_tcp(config_data_path),
         // potential config files
         sources,
         // env var prefix for this config

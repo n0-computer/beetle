@@ -14,23 +14,23 @@ const RAW: u64 = 0x55;
 const VALUES: [usize; 4] = [32, 256, 1024, 256 * 1024];
 #[derive(Debug, Copy, Clone)]
 enum Transport {
-    GrpcHttp2,
-    GrpcUds,
+    Tcp,
+    Uds,
     Mem,
 }
 
 impl Transport {
     fn new_addr(self) -> (StoreServerAddr, StoreClientAddr, Option<tempfile::TempDir>) {
         match self {
-            Transport::GrpcHttp2 => (
-                "grpc://127.0.0.1:4001".parse().unwrap(),
-                "grpc://127.0.0.1:4001".parse().unwrap(),
+            Transport::Tcp => (
+                "tcp://127.0.0.1:4001".parse().unwrap(),
+                "tcp://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
-            Transport::GrpcUds => {
+            Transport::Uds => {
                 let dir = tempfile::tempdir().unwrap();
                 let file = dir.path().join("iroh-store.uds");
-                (Addr::GrpcUds(file.clone()), Addr::GrpcUds(file), Some(dir))
+                (Addr::Uds(file.clone()), Addr::Uds(file), Some(dir))
             }
             Transport::Mem => {
                 let (a, b) = Addr::new_mem();
@@ -43,7 +43,7 @@ impl Transport {
 pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_put");
 
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::Tcp, Transport::Uds, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             let value = Bytes::from(vec![8u8; *value_size]);
@@ -103,7 +103,7 @@ pub fn put_benchmark(c: &mut Criterion) {
 
 pub fn get_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_get");
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::Tcp, Transport::Uds, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             group.throughput(criterion::Throughput::Bytes(*value_size as u64));

@@ -70,7 +70,7 @@ impl Config {
         let path: PathBuf = TempDir::new("iroh").unwrap().path().join("ipfsd.http");
 
         RpcClientConfig {
-            gateway_addr: Some(Addr::GrpcUds(path)),
+            gateway_addr: Some(Addr::Uds(path)),
             p2p_addr: None,
             store_addr: None,
         }

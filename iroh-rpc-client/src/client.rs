@@ -167,7 +167,7 @@ impl Client {
 
 //     #[tokio::test]
 //     async fn client_status() {
-//         let cfg = Config::default_grpc();
+//         let cfg = Config::default_tcp();
 
 //         let gateway_name = gateway::NAME;
 //         let p2p_name = network::NAME;

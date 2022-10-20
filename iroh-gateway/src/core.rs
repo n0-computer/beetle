@@ -132,7 +132,7 @@ mod tests {
     async fn spawn_gateway(
         mut config: Config,
     ) -> (SocketAddr, RpcClient, tokio::task::JoinHandle<()>) {
-        let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
+        let rpc_addr = "tcp://0.0.0.0:0".parse().unwrap();
         let rpc_client = RpcClient::new(config.take_rpc_client().unwrap())
             .await
             .unwrap();

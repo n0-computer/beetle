@@ -191,8 +191,8 @@ impl Config {
         }
     }
 
-    pub fn default_grpc() -> Self {
-        let rpc_client = RpcClientConfig::default_grpc();
+    pub fn default_tcp() -> Self {
+        let rpc_client = RpcClientConfig::default_tcp();
 
         Self {
             libp2p: Libp2pConfig::default(),
@@ -210,9 +210,9 @@ impl Config {
             .map(|addr| {
                 #[allow(unreachable_patterns)]
                 match addr {
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
+                    Addr::Tcp(addr) => Ok(Addr::Tcp(*addr)),
                     #[cfg(unix)]
-                    Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
+                    Addr::Uds(path) => Ok(Addr::Uds(path.clone())),
                     Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
                     _ => bail!("invalid rpc_addr"),
                 }
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Config::default_grpc();
+        let default = Config::default_tcp();
         let bootstrap_peers: Vec<String> = default
             .libp2p
             .bootstrap_peers
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_build_config_from_struct() {
-        let expect = Config::default_grpc();
+        let expect = Config::default_tcp();
         let got: Config = ConfigBuilder::builder()
             .add_source(expect.clone())
             .build()

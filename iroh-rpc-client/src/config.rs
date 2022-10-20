@@ -36,11 +36,11 @@ impl Source for Config {
 }
 
 impl Config {
-    pub fn default_grpc() -> Self {
+    pub fn default_tcp() -> Self {
         Self {
-            gateway_addr: Some("grpc://0.0.0.0:4400".parse().unwrap()),
-            p2p_addr: Some("grpc://0.0.0.0:4401".parse().unwrap()),
-            store_addr: Some("grpc://0.0.0.0:4402".parse().unwrap()),
+            gateway_addr: Some("tcp://0.0.0.0:4400".parse().unwrap()),
+            p2p_addr: Some("tcp://0.0.0.0:4401".parse().unwrap()),
+            store_addr: Some("tcp://0.0.0.0:4402".parse().unwrap()),
         }
     }
 }
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Config::default_grpc();
+        let default = Config::default_tcp();
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
             "gateway_addr".to_string(),

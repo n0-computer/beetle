@@ -16,9 +16,9 @@ where
     Req: Send + Sync + 'static,
     Resp: Send + Sync + 'static,
 {
-    GrpcHttp2(SocketAddr),
+    Tcp(SocketAddr),
     #[cfg(unix)]
-    GrpcUds(std::path::PathBuf),
+    Uds(std::path::PathBuf),
     Mem(Channel<Req, Resp>),
 }
 
@@ -29,9 +29,9 @@ where
 {
     fn clone(&self) -> Self {
         match self {
-            Self::GrpcHttp2(addr) => Self::GrpcHttp2(addr.clone()),
+            Self::Tcp(addr) => Self::Tcp(addr.clone()),
             #[cfg(unix)]
-            Self::GrpcUds(path) => Self::GrpcUds(path.clone()),
+            Self::Uds(path) => Self::Uds(path.clone()),
             Self::Mem(chan) => Self::Mem(chan.clone()),
         }
     }
@@ -44,9 +44,9 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::GrpcHttp2(addr1), Self::GrpcHttp2(addr2)) => addr1.eq(addr2),
+            (Self::Tcp(addr1), Self::Tcp(addr2)) => addr1.eq(addr2),
             #[cfg(unix)]
-            (Self::GrpcUds(path1), Self::GrpcUds(path2)) => path1.eq(path2),
+            (Self::Uds(path1), Self::Uds(path2)) => path1.eq(path2),
             _ => false,
         }
     }
@@ -70,7 +70,7 @@ where
     Resp: Send + Sync + 'static,
 {
     pub fn try_as_socket_addr(&self) -> Option<SocketAddr> {
-        if let Addr::GrpcHttp2(addr) = self {
+        if let Addr::Tcp(addr) = self {
             return Some(*addr);
         }
         None
@@ -84,9 +84,9 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Addr::GrpcHttp2(addr) => write!(f, "grpc://{}", addr),
+            Addr::Tcp(addr) => write!(f, "tcp://{}", addr),
             #[cfg(unix)]
-            Addr::GrpcUds(path) => write!(f, "grpc://{}", path.display()),
+            Addr::Uds(path) => write!(f, "uds://{}", path.display()),
             Addr::Mem(_) => write!(f, "mem"),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
@@ -118,14 +118,18 @@ where
 
         let mut parts = s.split("://");
         if let Some(prefix) = parts.next() {
-            if prefix == "grpc" {
+            if prefix == "tcp" {
                 if let Some(part) = parts.next() {
                     if let Ok(addr) = part.parse::<SocketAddr>() {
-                        return Ok(Addr::GrpcHttp2(addr));
+                        return Ok(Addr::Tcp(addr));
                     }
-                    #[cfg(unix)]
+                }
+            }
+            #[cfg(unix)]
+            if prefix == "uds" {
+                if let Some(part) = parts.next() {
                     if let Ok(path) = part.parse::<std::path::PathBuf>() {
-                        return Ok(Addr::GrpcUds(path));
+                        return Ok(Addr::Uds(path));
                     }
                 }
             }
@@ -246,22 +250,22 @@ mod tests {
     use tarpc::server::incoming::Incoming;
 
     #[test]
-    fn test_addr_roundtrip_grpc_http2() {
+    fn test_addr_roundtrip_tcp() {
         let socket: SocketAddr = "198.168.2.1:1234".parse().unwrap();
-        let addr = Addr::GrpcHttp2(socket);
+        let addr = Addr::Tcp(socket);
 
         assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "grpc://198.168.2.1:1234");
+        assert_eq!(addr.to_string(), "tcp://198.168.2.1:1234");
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_addr_roundtrip_grpc_uds() {
+    fn test_addr_roundtrip_uds() {
         let path: std::path::PathBuf = "/foo/bar".parse().unwrap();
-        let addr = Addr::GrpcUds(path);
+        let addr = Addr::Uds(path);
 
         assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "grpc:///foo/bar");
+        assert_eq!(addr.to_string(), "uds:///foo/bar");
     }
 
     #[test]

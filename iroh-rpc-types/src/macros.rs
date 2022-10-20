@@ -11,8 +11,9 @@ macro_rules! impl_serve {
                 server: $server,
             ) -> anyhow::Result<()> {
                 match server_addr {
-                    $crate::Addr::GrpcHttp2(server_addr) => serve_tcp(server_addr, server).await,
-                    $crate::Addr::GrpcUds(server_addr) => todo!(),
+                    $crate::Addr::Tcp(server_addr) => serve_tcp(server_addr, server).await,
+                    #[cfg(unix)]
+                    $crate::Addr::Uds(server_addr) => todo!(),
                     $crate::Addr::Mem(chan) => serve_mem(chan, server).await,
                 }
             }

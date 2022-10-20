@@ -504,7 +504,7 @@ impl P2pClient {
 //         let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
 //         let addr = listener.local_addr().unwrap();
 //         let server_task = tokio::spawn(async move { TestRpcServer::serve(listener).await });
-//         let client = P2pClient::new(Addr::GrpcHttp2(addr)).await.unwrap();
+//         let client = P2pClient::new(Addr::Tcp(addr)).await.unwrap();
 
 //         // check the gossipsub methods serialize and deserialize correctly
 //         client

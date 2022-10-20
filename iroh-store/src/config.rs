@@ -47,8 +47,8 @@ impl Config {
         }
     }
 
-    pub fn new_grpc(path: PathBuf) -> Self {
-        let addr = "grpc://0.0.0.0:4402";
+    pub fn new_tcp(path: PathBuf) -> Self {
+        let addr = "tcp://0.0.0.0:4402";
         Self::new_with_rpc(path, addr.parse().unwrap())
     }
 
@@ -60,9 +60,9 @@ impl Config {
             .map(|addr| {
                 #[allow(unreachable_patterns)]
                 match addr {
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
+                    Addr::Tcp(addr) => Ok(Addr::Tcp(*addr)),
                     #[cfg(unix)]
-                    Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
+                    Addr::Uds(path) => Ok(Addr::Uds(path.clone())),
                     Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
                     _ => bail!("invalid rpc_addr"),
                 }
@@ -98,7 +98,7 @@ mod tests {
     #[cfg(unix)]
     fn test_collect() {
         let path = PathBuf::new().join("test");
-        let default = Config::new_grpc(path);
+        let default = Config::new_tcp(path);
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
@@ -126,7 +126,7 @@ mod tests {
     #[cfg(unix)]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
-        let expect = Config::new_grpc(path);
+        let expect = Config::new_tcp(path);
         let got: Config = ConfigBuilder::builder()
             .add_source(expect.clone())
             .build()

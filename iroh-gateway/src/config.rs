@@ -65,9 +65,9 @@ impl Config {
             .map(|addr| {
                 #[allow(unreachable_patterns)]
                 match addr {
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
+                    Addr::Tcp(addr) => Ok(Addr::Tcp(*addr)),
                     #[cfg(unix)]
-                    Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
+                    Addr::Uds(path) => Ok(Addr::Uds(path.clone())),
                     Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
                     _ => bail!("invalid rpc_addr"),
                 }
@@ -107,7 +107,7 @@ fn default_headers() -> HeaderMap {
 
 impl Default for Config {
     fn default() -> Self {
-        let rpc_client = RpcClientConfig::default_grpc();
+        let rpc_client = RpcClientConfig::default_tcp();
         let mut t = Self {
             public_url_base: String::new(),
             headers: HeaderMap::new(),
