@@ -65,11 +65,9 @@ impl Config {
             .map(|addr| {
                 #[allow(unreachable_patterns)]
                 match addr {
-                    #[cfg(feature = "rpc-grpc")]
                     Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                    #[cfg(all(feature = "rpc-grpc", unix))]
+                    #[cfg(unix)]
                     Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
-                    #[cfg(feature = "rpc-mem")]
                     Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
                     _ => bail!("invalid rpc_addr"),
                 }

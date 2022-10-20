@@ -75,7 +75,5 @@ features = ["std", "multihash-impl", "identity", "sha2"]
 [dev-dependencies]
 
 [features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+default = []
 

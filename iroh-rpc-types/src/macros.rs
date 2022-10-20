@@ -56,7 +56,7 @@ macro_rules! impl_serve {
             }
 
             async fn serve_mem(
-                server_transport: tarpc::transport::channel::Channel<tarpc::ClientMessage<$req>, tarpc::Response<$resp>>,
+                server_transport: $crate::Channel<tarpc::ClientMessage<$req>, tarpc::Response<$resp>>,
                 server: $server,
             ) -> anyhow::Result<()> {
                 use tarpc::server::Channel;

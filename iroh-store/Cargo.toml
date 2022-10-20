@@ -43,9 +43,7 @@ tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 libipld = "0.14.0"
 
 [features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+default = []
 
 [[bench]]
 name = "store"

@@ -52,18 +52,16 @@ macro_rules! impl_client {
                 pub async fn new(addr: [<$label ClientAddr>]) -> Result<Self> {
                     // tracing::info!("connecting to {}", addr);
                     match addr {
-                        #[cfg(feature = "grpc")]
                         iroh_rpc_types::Addr::GrpcHttp2(server_addr) => {
 
                             Ok([<$label Client>] {
                                 backend: std::sync::Arc::new(tokio::sync::RwLock::new([<$label BackendState>]::Disconnected(server_addr))),
                             })
                         }
-                        #[cfg(all(feature = "grpc", unix))]
+                        #[cfg(unix)]
                         iroh_rpc_types::Addr::GrpcUds(_path) => {
                             todo!()
                         }
-                        #[cfg(feature = "mem")]
                         iroh_rpc_types::Addr::Mem(client_transport) => {
                             let client = iroh_rpc_types::[<$label:snake>]::[<$label Client>]::new(
                                 tarpc::client::Config::default(),

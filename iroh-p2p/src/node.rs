@@ -885,7 +885,6 @@ mod tests {
     use iroh_rpc_types::Addr;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    #[cfg(feature = "rpc-grpc")]
     #[tokio::test]
     async fn test_fetch_providers_grpc_dht() -> Result<()> {
         let server_addr = "grpc://0.0.0.0:4401".parse().unwrap();
@@ -899,7 +898,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "rpc-grpc", unix))]
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_fetch_providers_uds_dht() -> Result<()> {
         use iroh_rpc_client::network::P2pClientAddr;
@@ -918,7 +917,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "rpc-mem")]
     #[tokio::test]
     async fn test_fetch_providers_mem_dht() -> Result<()> {
         tracing_subscriber::registry()

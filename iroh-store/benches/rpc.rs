@@ -4,12 +4,9 @@ use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::{Client, Config as RpcClientConfig};
-use iroh_rpc_types::{
-    store::{StoreClientAddr, StoreServerAddr},
-    Addr,
-};
-use iroh_store::{Config, Store};
+use iroh_rpc_client::{store::StoreClientAddr, Client, Config as RpcClientConfig};
+use iroh_rpc_types::Addr;
+use iroh_store::{rpc::StoreServerAddr, Config, Store};
 use tokio::runtime::Runtime;
 
 const RAW: u64 = 0x55;
@@ -77,7 +74,9 @@ pub fn put_benchmark(c: &mut Criterion) {
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
-                            iroh_store::rpc::new(server_addr, store).await.unwrap()
+                            iroh_store::rpc::serve(server_addr, store.into())
+                                .await
+                                .unwrap()
                         });
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly
@@ -131,7 +130,9 @@ pub fn get_benchmark(c: &mut Criterion) {
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
-                            iroh_store::rpc::new(server_addr, store).await.unwrap()
+                            iroh_store::rpc::serve(server_addr, store.into())
+                                .await
+                                .unwrap()
                         });
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly

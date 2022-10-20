@@ -1,9 +1,9 @@
-#[cfg(feature = "grpc")]
+use anyhow::{anyhow, Context, Result};
+
 use crate::config::Config;
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
 use crate::store::StoreClient;
-use anyhow::{anyhow, Context, Result};
 
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -123,7 +123,7 @@ impl Client {
 }
 
 // // TODO: write tests for mem transport
-// #[cfg(all(test, feature = "grpc"))]
+// #[cfg(test)]
 // mod tests {
 //     use super::*;
 //     use std::net::SocketAddr;

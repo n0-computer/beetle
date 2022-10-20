@@ -11,7 +11,7 @@ pub mod store;
 pub mod test;
 
 mod addr;
-pub use crate::addr::Addr;
+pub use crate::addr::{Addr, Channel, ChannelError};
 
 #[derive(thiserror::Error, Debug, Clone, Serialize, Deserialize)]
 #[error("Rpc: {0}")]

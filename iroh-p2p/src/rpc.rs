@@ -1,9 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, ensure, Context as _};
+use anyhow::{anyhow, Context as _};
 use bytes::Bytes;
 use cid::Cid;
-use futures::StreamExt;
 use iroh_bitswap::Block;
 use iroh_rpc_types::RpcError;
 use iroh_rpc_types::{
@@ -191,8 +190,7 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await.map_err(RpcError::from_any)?;
 
-        let query_id = r.await.map_err(RpcError::from_any)??;
-
+        let _query_id = r.await.map_err(RpcError::from_any)??;
         Ok(())
     }
 
