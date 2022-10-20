@@ -15,7 +15,7 @@ use tracing::{debug, warn};
 
 impl_client!(P2p);
 
-const DEFAULT_DEADLINE: Duration = Duration::from_secs(60);
+const DEFAULT_DEADLINE: Duration = Duration::from_secs(120);
 
 fn default_context() -> Context {
     let mut ctx = Context::current();

@@ -7,7 +7,7 @@ use tarpc::context::Context;
 
 impl_client!(Store);
 
-const DEFAULT_DEADLINE: Duration = Duration::from_secs(60);
+const DEFAULT_DEADLINE: Duration = Duration::from_secs(120);
 
 fn default_context() -> Context {
     let mut ctx = Context::current();
