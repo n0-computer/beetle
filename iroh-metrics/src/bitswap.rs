@@ -81,5 +81,13 @@ make_metrics! {
     MessageQueuesStopped: Counter: "",
 
     NetworkBehaviourActionPollTick: Counter: "",
-    NetworkPollTick: Counter: ""
+    NetworkPollTick: Counter: "",
+
+    SendHaves: Counter:  "",
+    SendDontHaves: Counter: "",
+    SendWantHaves: Counter: "",
+    SendWantBlocks: Counter: "",
+    SendWantHaveCancels: Counter: "",
+    SendWantBlockCancels: Counter: "",
+    SendBlocks: Counter: ""
 }

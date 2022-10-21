@@ -15,7 +15,11 @@ use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, trace};
 
-use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
+use crate::{
+    message::{BitswapMessage, WantType},
+    protocol::ProtocolId,
+    BitswapEvent,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(3 * 60 + 5);
@@ -126,6 +130,41 @@ impl Network {
                     BitswapMetrics::MessageBytesOut,
                     message.clone().encoded_len() as u64
                 );
+                record!(BitswapMetrics::SendHaves, message.haves().count() as u64);
+                record!(
+                    BitswapMetrics::SendDontHaves,
+                    message.dont_haves().count() as u64
+                );
+                record!(
+                    BitswapMetrics::SendWantHaves,
+                    message
+                        .wantlist()
+                        .filter(|e| e.want_type == WantType::Have && !e.cancel)
+                        .count() as u64
+                );
+                record!(
+                    BitswapMetrics::SendWantBlocks,
+                    message
+                        .wantlist()
+                        .filter(|e| e.want_type == WantType::Block && !e.cancel)
+                        .count() as u64
+                );
+                record!(
+                    BitswapMetrics::SendWantHaveCancels,
+                    message
+                        .wantlist()
+                        .filter(|e| e.want_type == WantType::Have && e.cancel)
+                        .count() as u64
+                );
+                record!(
+                    BitswapMetrics::SendWantBlockCancels,
+                    message
+                        .wantlist()
+                        .filter(|e| e.want_type == WantType::Block && e.cancel)
+                        .count() as u64
+                );
+                record!(BitswapMetrics::SendBlocks, message.blocks_len() as u64);
+
                 self.network_out_sender
                     .send(OutEvent::SendMessage {
                         peer,
