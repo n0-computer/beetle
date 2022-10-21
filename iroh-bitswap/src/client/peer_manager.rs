@@ -22,6 +22,7 @@ pub struct PeerManager {
 #[derive(Derivative)]
 #[derivative(Debug)]
 enum Message {
+    Status,
     GetConnectedPeers(oneshot::Sender<Vec<PeerId>>),
     GetCurrentWants(oneshot::Sender<AHashSet<Cid>>),
     GetCurrentWantBlocks(oneshot::Sender<AHashSet<Cid>>),
@@ -97,6 +98,10 @@ impl PeerManager {
         });
 
         Self { sender }
+    }
+
+    pub async fn print_status(&self) {
+        self.send(Message::Status).await;
     }
 
     pub async fn set_cb<F>(&self, on_dont_have_timeout: F)
@@ -308,6 +313,9 @@ async fn run(mut actor: PeerManagerActor) {
         tokio::select! {
             message = actor.receiver.recv() => {
                 match message {
+                    Some(Message::Status) => {
+                        actor.print_status().await;
+                    }
                     Some(Message::GetConnectedPeers(r)) => {
                         let _= r.send(actor.connected_peers().await);
                     },
@@ -462,6 +470,19 @@ impl PeerManagerActor {
             r?;
         }
         Ok(())
+    }
+
+    async fn print_status(&self) {
+        println!("PeerManager");
+        println!("peers: {}", self.peers.len());
+        println!("sessions: {}", self.sessions.len());
+        let mut mq_size = 0;
+        for (_, peer) in &self.peers {
+            mq_size += peer.message_queue.size().await.unwrap_or_default();
+        }
+
+        println!("Message Queue Size: {}", mq_size);
+        self.peer_want_manager.print_status();
     }
 
     /// Returns a list of peers this peer manager is managing.

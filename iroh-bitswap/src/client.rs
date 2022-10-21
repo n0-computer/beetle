@@ -121,6 +121,11 @@ impl<S: Store> Client<S> {
         }
     }
 
+    pub(crate) async fn print_status(&self) {
+        println!("client block subscribers: {}", self.notify.receiver_count());
+        self.session_manager.print_status().await;
+    }
+
     pub async fn stop(self) -> Result<()> {
         self.session_manager.stop().await?;
 

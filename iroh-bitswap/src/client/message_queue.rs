@@ -40,6 +40,7 @@ enum WantsUpdate {
         want_haves: Vec<Cid>,
     },
     Cancels(AHashSet<Cid>),
+    Size(tokio::sync::oneshot::Sender<usize>),
     #[cfg(test)]
     #[allow(dead_code)]
     GetWants(tokio::sync::oneshot::Sender<Wants>),
@@ -135,6 +136,13 @@ impl MessageQueue {
         self.send_wants_update(WantsUpdate::GetWants(s)).await;
         let wants = r.await?;
         Ok(wants)
+    }
+
+    pub(crate) async fn size(&self) -> Result<usize> {
+        let (s, r) = tokio::sync::oneshot::channel();
+        self.send_wants_update(WantsUpdate::Size(s)).await;
+        let size = r.await?;
+        Ok(size)
     }
 
     /// Add want-haves that are part of a broadcast to all connected peers.
@@ -434,6 +442,9 @@ impl MessageQueueActor {
                 if work_ready {
                     self.signal_work();
                 }
+            }
+            WantsUpdate::Size(r) => {
+                let _ = r.send(self.wants.size());
             }
             #[cfg(test)]
             WantsUpdate::GetWants(r) => r.send(self.wants.clone()).unwrap(),

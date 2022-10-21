@@ -26,6 +26,13 @@ struct PeerWant {
 }
 
 impl PeerWantManager {
+    pub fn print_status(&self) {
+        println!("PeerWantManager");
+        println!("Peer Wants: {}", self.peer_wants.len());
+        println!("Want Peers: {}", self.want_peers.len());
+        println!("Broadcast Wants: {}", self.broadcast_wants.len());
+    }
+
     /// Adds a peer whose wants we need to keep track of.
     /// Sends the current list of broadcasts to this peer.
     pub async fn add_peer(&mut self, peer_queue: &MessageQueue, peer: &PeerId) {

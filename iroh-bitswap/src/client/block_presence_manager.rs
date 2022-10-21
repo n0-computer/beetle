@@ -15,6 +15,16 @@ impl BlockPresenceManager {
         Self::default()
     }
 
+    pub async fn print_status(&self) {
+        let presence = &*self.presence.read().await;
+        let total_peers: usize = presence.values().map(|w| w.len()).sum();
+        println!(
+            "BlockPresenceManager {} cids, total peers: {}",
+            presence.len(),
+            total_peers
+        );
+    }
+
     /// Called when a peer sends us information about which blocks it has and does not have.
     pub async fn receive_from(&self, peer: &PeerId, haves: &[Cid], dont_haves: &[Cid]) {
         let presence = &mut *self.presence.write().await;

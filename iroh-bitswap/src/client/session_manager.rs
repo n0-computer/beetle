@@ -77,6 +77,17 @@ impl SessionManager {
         this
     }
 
+    pub async fn print_status(&self) {
+        println!(
+            "session index: {}",
+            self.inner.session_index.load(Ordering::Relaxed)
+        );
+        println!("sessions: {}", self.inner.sessions.read().await.len());
+        self.inner.session_interest_manager.print_status().await;
+        self.inner.block_presence_manager.print_status().await;
+        self.inner.peer_manager.print_status().await;
+    }
+
     pub fn peer_manager(&self) -> &PeerManager {
         &self.inner.peer_manager
     }

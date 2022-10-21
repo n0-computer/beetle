@@ -75,6 +75,7 @@ pub struct Bitswap<S: Store> {
     peers_connected: mpsc::Sender<PeerId>,
     peers_disconnected: mpsc::Sender<PeerId>,
     _workers: Arc<Vec<JoinHandle<()>>>,
+    last_status: Arc<Mutex<Instant>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +204,7 @@ impl<S: Store> Bitswap<S> {
             peers_connected: sender_con,
             peers_disconnected: sender_dis,
             _workers: Arc::new(workers),
+            last_status: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -369,6 +371,21 @@ impl<S: Store> Bitswap<S> {
             }
         }
     }
+
+    fn print_status(&self) {
+        let last_status = &mut *self.last_status.lock().unwrap();
+        if last_status.elapsed() > Duration::from_secs(5) {
+            println!("STATUS");
+            println!("peers: {}", self.peers.lock().unwrap().len());
+            println!("dials: {}", self.dials.lock().unwrap().len());
+
+            let client = self.client.clone();
+            tokio::task::spawn(async move {
+                client.print_status().await;
+            });
+            *last_status = Instant::now();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -513,6 +530,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
         inc!(BitswapMetrics::NetworkBehaviourActionPollTick);
+
+        self.print_status();
+
         // limit work
         for _ in 0..50 {
             match Pin::new(&mut self.network).poll(cx) {

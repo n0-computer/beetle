@@ -21,6 +21,16 @@ pub struct SessionInterestManager {
 }
 
 impl SessionInterestManager {
+    pub async fn print_status(&self) {
+        let wants = &*self.wants.read().await;
+        let num_total_sessions: usize = wants.values().map(|m| m.len()).sum();
+        println!(
+            "SessionInterestManager: {} cids, total sessions: {}",
+            wants.len(),
+            num_total_sessions
+        );
+    }
+
     /// When the client asks the session for blocks, the session calls this methods.
     pub async fn record_session_interest(&self, session: u64, keys: &[Cid]) {
         debug!("session:{} record_session_interest: {:?}", session, keys);

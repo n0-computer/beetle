@@ -17,6 +17,10 @@ pub struct Wants {
 }
 
 impl Wants {
+    pub fn size(&self) -> usize {
+        self.bcst_wants.len() + self.peer_wants.len() + self.cancels.len()
+    }
+
     /// Wether there is work to be processed.
     pub fn has_pending_work(&self) -> bool {
         self.pending_work_count() > 0
@@ -39,6 +43,10 @@ pub struct RecallWantlist {
 }
 
 impl RecallWantlist {
+    pub fn len(&self) -> usize {
+        self.pending.len() + self.sent.len()
+    }
+
     /// Adds a want to the pending list.
     pub fn add(&mut self, cid: Cid, priority: Priority, want_type: WantType) {
         self.pending.add(cid, priority, want_type);
