@@ -180,14 +180,8 @@ impl PeerWantManager {
             return;
         }
 
-        // record how many peers have a pending want-block and wan-thave for each key to
-        // be cancelled
-        // TODO: for gauges
-        let _peer_counts: AHashMap<Cid, WantPeerCounts> = cancels
-            .iter()
-            .map(|cid| (*cid, self.want_peer_counts(cid)))
-            .collect();
-
+        // Record how many peers have a pending want-block and wan-thave for each key to
+        // be cancelled.
         let broadcast_cancels: AHashSet<Cid> = cancels
             .iter()
             .filter(|cid| self.broadcast_wants.contains(cid))
@@ -226,7 +220,7 @@ impl PeerWantManager {
         }
 
         if broadcast_cancels.is_empty() {
-            // Only send cancels ot peers that received a corresponding want
+            // Only send cancels to peers that received a corresponding want.
             let cancel_peers: AHashSet<PeerId> = cancels
                 .iter()
                 .filter_map(|cid| self.want_peers.get(cid))
@@ -242,7 +236,7 @@ impl PeerWantManager {
                 }
             }
         } else {
-            // if a broadcast want is being cancelled, send the cancel to all peers
+            // If a broadcast want is being cancelled, send the cancel to all peers.
             for (peer, peer_wants) in &mut self.peer_wants {
                 send!(peer, peer_wants);
             }
