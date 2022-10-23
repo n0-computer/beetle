@@ -104,31 +104,19 @@ impl SessionInterestManager {
     }
 
     /// Called to filter the sets of keys for those that the session is interested in.
-    pub async fn filter_session_interested(
-        &self,
-        session: u64,
-        key_sets: &[&[Cid]],
-    ) -> Vec<Vec<Cid>> {
-        debug!("filter_session_interested",);
-
-        let mut results = Vec::with_capacity(key_sets.len());
+    pub async fn filter_session_interested(&self, session: u64, to_filter: &[Cid]) -> Vec<Cid> {
         let wants = &*self.wants.read().await;
 
-        for key_set in key_sets {
-            let mut has = Vec::new();
-
-            for key in *key_set {
-                if let Some(wants) = wants.get(key) {
-                    if wants.get(&session).copied().unwrap_or_default() {
-                        has.push(*key);
-                    }
-                }
-            }
-
-            results.push(has);
-        }
-
-        results
+        to_filter
+            .iter()
+            .filter(|key| {
+                wants
+                    .get(key)
+                    .map(|wants| wants.get(&session).copied().unwrap_or_default())
+                    .unwrap_or_default()
+            })
+            .copied()
+            .collect()
     }
 
     /// Splits the list of blocks into wanted and unwanted blocks.
@@ -136,8 +124,6 @@ impl SessionInterestManager {
         &self,
         blocks: &'a [Block],
     ) -> (Vec<&'a Block>, Vec<&'a Block>) {
-        debug!("split_wanted_unwantedn",);
-
         let wants = &*self.wants.read().await;
 
         let mut wanted_keys = AHashSet::new();
@@ -173,7 +159,6 @@ impl SessionInterestManager {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) -> AHashSet<u64> {
-        debug!("interested sessions");
         let wants = &*self.wants.read().await;
 
         let mut session_keys = AHashSet::new();

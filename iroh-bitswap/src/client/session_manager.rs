@@ -232,18 +232,31 @@ impl SessionManager {
                     // The SessionManager tells each Session about all keys that it may be
                     // interested in. Here the Session filters the keys to the ones that this
                     // particular Session is interested in.
-                    let mut interested_res = self
+                    let interested_keys = self
                         .inner
                         .session_interest_manager
-                        .filter_session_interested(*id, &[blocks, haves, dont_haves][..])
+                        .filter_session_interested(*id, blocks)
                         .await;
 
-                    let filtered_dont_haves = interested_res.pop().unwrap();
-                    let filtered_haves = interested_res.pop().unwrap();
-                    let filtered_keys = interested_res.pop().unwrap();
+                    let interested_haves = self
+                        .inner
+                        .session_interest_manager
+                        .filter_session_interested(*id, haves)
+                        .await;
+
+                    let interested_dont_haves = self
+                        .inner
+                        .session_interest_manager
+                        .filter_session_interested(*id, dont_haves)
+                        .await;
 
                     session
-                        .receive_from(peer, filtered_keys, filtered_haves, filtered_dont_haves)
+                        .receive_from(
+                            peer,
+                            interested_keys,
+                            interested_haves,
+                            interested_dont_haves,
+                        )
                         .await;
                 }
             }
