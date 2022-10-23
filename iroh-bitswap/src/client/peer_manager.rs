@@ -14,7 +14,7 @@ use crate::network::Network;
 
 use super::{message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::Signaler};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PeerManager {
     sender: mpsc::Sender<Message>,
 }

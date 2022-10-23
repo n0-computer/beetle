@@ -19,10 +19,7 @@ use crate::{network::Network, Block};
 
 use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
 
-use super::{
-    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
-    session_manager::SessionManager,
-};
+use super::{block_presence_manager::BlockPresenceManager, session_manager::SessionManager};
 
 mod cid_queue;
 mod peer_response_tracker;
@@ -84,7 +81,6 @@ impl Session {
     pub async fn new(
         id: u64,
         session_manager: SessionManager,
-        peer_manager: PeerManager,
         block_presence_manager: BlockPresenceManager,
         network: Network,
         notify: async_broadcast::Sender<Block>,
@@ -97,7 +93,6 @@ impl Session {
 
         let session_want_sender = SessionWantSender::new(
             id,
-            peer_manager.clone(),
             session_manager.clone(),
             block_presence_manager,
             incoming_s.clone(),
@@ -110,7 +105,6 @@ impl Session {
             session_wants,
             session_want_sender,
             network,
-            peer_manager,
             initial_search_delay,
             incoming_s.clone(),
         );
@@ -332,7 +326,6 @@ struct LoopState {
     session_manager: SessionManager,
     session_wants: SessionWants,
     session_want_sender: SessionWantSender,
-    peer_manager: PeerManager,
     latency_tracker: LatencyTracker,
     idle_tick: Pin<Box<Sleep>>,
     base_tick_delay: Duration,
@@ -350,7 +343,6 @@ impl LoopState {
         session_wants: SessionWants,
         session_want_sender: SessionWantSender,
         network: Network,
-        peer_manager: PeerManager,
         initial_search_delay: Duration,
         incoming: async_channel::Sender<Op>,
     ) -> Self {
@@ -416,7 +408,6 @@ impl LoopState {
             consecutive_ticks: 0,
             session_wants,
             session_want_sender,
-            peer_manager,
             latency_tracker: Default::default(),
             base_tick_delay: Duration::from_millis(500),
             initial_search_delay,
@@ -550,7 +541,8 @@ impl LoopState {
         // If we have discovered peers already, the sessionWantSender will
         // send wants to them.
         if self
-            .peer_manager
+            .session_manager
+            .peer_manager()
             .peers_discovered_for_session(self.id)
             .await
         {
@@ -577,7 +569,10 @@ impl LoopState {
             self.id,
             wants.iter().map(|w| w.to_string()).collect::<Vec<_>>()
         );
-        self.peer_manager.broadcast_want_haves(wants).await;
+        self.session_manager
+            .peer_manager()
+            .broadcast_want_haves(wants)
+            .await;
     }
 
     /// The session will broadcast if it has outstanding wants and doesn't receive

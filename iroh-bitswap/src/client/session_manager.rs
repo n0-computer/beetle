@@ -128,7 +128,6 @@ impl SessionManager {
         let session = Session::new(
             session_id,
             self.clone(),
-            self.inner.peer_manager.clone(),
             self.inner.block_presence_manager.clone(),
             self.inner.network.clone(),
             self.inner.notify.clone(),

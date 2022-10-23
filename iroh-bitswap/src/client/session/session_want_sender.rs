@@ -10,8 +10,7 @@ use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error, info, warn};
 
 use crate::client::{
-    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
-    session_manager::SessionManager,
+    block_presence_manager::BlockPresenceManager, session_manager::SessionManager,
 };
 
 use super::{
@@ -139,7 +138,6 @@ fn signal_availability(changes: async_channel::Sender<Change>, peer: PeerId, is_
 impl SessionWantSender {
     pub(super) fn new(
         session_id: u64,
-        peer_manager: PeerManager,
         session_manager: SessionManager,
         block_presence_manager: BlockPresenceManager,
         session_ops: async_channel::Sender<super::Op>,
@@ -155,7 +153,6 @@ impl SessionWantSender {
         let mut loop_state = LoopState::new(
             changes_r.clone(),
             signaler,
-            peer_manager,
             session_manager,
             block_presence_manager,
             session_ops,
@@ -390,8 +387,6 @@ struct LoopState {
     sent_want_blocks_tracker: SentWantBlocksTracker,
     /// Tracks the number of blocks each peer sent us
     peer_response_tracker: PeerResponseTracker,
-    /// Sends wants to peers
-    peer_manager: PeerManager,
     /// Cancels wants.
     session_manager: SessionManager,
     /// Keeps track of which peer has / doesn't have a block.
@@ -403,7 +398,6 @@ impl LoopState {
     fn new(
         changes: async_channel::Receiver<Change>,
         signaler: Signaler,
-        peer_manager: PeerManager,
         session_manager: SessionManager,
         block_presence_manager: BlockPresenceManager,
         session_ops: async_channel::Sender<super::Op>,
@@ -411,7 +405,6 @@ impl LoopState {
         LoopState {
             changes,
             signaler,
-            peer_manager,
             wants: Default::default(),
             peer_consecutive_dont_haves: Default::default(),
             sent_want_blocks_tracker: SentWantBlocksTracker::default(),
@@ -424,7 +417,10 @@ impl LoopState {
 
     async fn stop(self) -> Result<()> {
         // Unregister the session with the PeerManager
-        self.peer_manager.unregister_session(self.signaler.id).await;
+        self.session_manager
+            .peer_manager()
+            .unregister_session(self.signaler.id)
+            .await;
 
         Ok(())
     }
@@ -477,7 +473,8 @@ impl LoopState {
                     if !update.keys.is_empty() || !update.haves.is_empty() {
                         // Register with the PeerManager
                         let is_new = self
-                            .peer_manager
+                            .session_manager
+                            .peer_manager()
                             .register_session(&update.from, self.signaler.clone())
                             .await;
                         availability.insert(update.from, (true, Some(is_new)));
@@ -512,7 +509,12 @@ impl LoopState {
         }
 
         // If there are some connected peers, send any pending wants
-        if self.peer_manager.session_has_peers(self.id()).await {
+        if self
+            .session_manager
+            .peer_manager()
+            .session_has_peers(self.id())
+            .await
+        {
             self.send_next_wants(newly_available).await;
         }
     }
@@ -535,7 +537,8 @@ impl LoopState {
             let mut state_change = false;
             if *is_now_available {
                 let is_new_peer = self
-                    .peer_manager
+                    .session_manager
+                    .peer_manager()
                     .add_peer_to_session(self.id(), *peer)
                     .await;
                 if is_new_peer || is_new.unwrap_or_default() {
@@ -544,7 +547,8 @@ impl LoopState {
                 }
             } else {
                 let was_available = self
-                    .peer_manager
+                    .session_manager
+                    .peer_manager()
                     .remove_peer_from_session(self.id(), *peer)
                     .await;
                 if was_available {
@@ -568,7 +572,11 @@ impl LoopState {
     /// Creates a new entry in the map of cid -> want info.
     async fn track_wants(&mut self, cids: Vec<Cid>) {
         debug!("tracking: {} wants", cids.len());
-        let peers = self.peer_manager.peers_for_session(self.id()).await;
+        let peers = self
+            .session_manager
+            .peer_manager()
+            .peers_for_session(self.id())
+            .await;
 
         for cid in cids {
             if self.wants.contains_key(&cid) {
@@ -611,7 +619,8 @@ impl LoopState {
 
                     // Protect the connection to this peer so that we can ensure
                     // that the connection doesn't get pruned by the connection manager.
-                    self.peer_manager
+                    self.session_manager
+                        .peer_manager()
                         .protect_connection(self.id(), update.from)
                         .await;
                     self.peer_consecutive_dont_haves.remove(&update.from);
@@ -744,7 +753,12 @@ impl LoopState {
 
             // If the last available peer in the session has become unavailable
             // then we need to broadcast all pending wants
-            if !self.peer_manager.session_has_peers(self.id()).await {
+            if !self
+                .session_manager
+                .peer_manager()
+                .session_has_peers(self.id())
+                .await
+            {
                 self.process_exhausted_wants(wants).await;
                 return;
             }
@@ -756,7 +770,11 @@ impl LoopState {
             let exhausted = self
                 .block_presence_manager
                 .all_peers_do_not_have_block(
-                    &self.peer_manager.peers_for_session(self.id()).await,
+                    &self
+                        .session_manager
+                        .peer_manager()
+                        .peers_for_session(self.id())
+                        .await,
                     wants,
                 )
                 .await;
@@ -809,7 +827,12 @@ impl LoopState {
                 to_send.for_peer(best_peer).want_blocks.insert(*cid);
 
                 // Send a want-have to each other peer.
-                for op in self.peer_manager.peers_for_session(id).await {
+                for op in self
+                    .session_manager
+                    .peer_manager()
+                    .peers_for_session(id)
+                    .await
+                {
                     if &op != best_peer {
                         to_send.for_peer(&op).want_haves.insert(*cid);
                     }
@@ -846,7 +869,8 @@ impl LoopState {
             // precedence over want-haves.
             let mut want_blocks: Vec<_> = snd.want_blocks.into_iter().collect();
             let want_haves: Vec<_> = snd.want_haves.into_iter().collect();
-            self.peer_manager
+            self.session_manager
+                .peer_manager()
                 .send_wants(&peer, &want_blocks, &want_haves)
                 .await;
             // Record which peers we send want-block to
