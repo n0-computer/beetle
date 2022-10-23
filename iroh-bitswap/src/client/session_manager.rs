@@ -129,7 +129,6 @@ impl SessionManager {
             session_id,
             self.clone(),
             self.inner.peer_manager.clone(),
-            self.inner.session_interest_manager.clone(),
             self.inner.block_presence_manager.clone(),
             self.inner.network.clone(),
             self.inner.notify.clone(),
@@ -230,7 +229,22 @@ impl SessionManager {
                 .await
             {
                 if let Some(session) = sessions.get(id) {
-                    session.receive_from(peer, blocks, haves, dont_haves).await;
+                    // The SessionManager tells each Session about all keys that it may be
+                    // interested in. Here the Session filters the keys to the ones that this
+                    // particular Session is interested in.
+                    let mut interested_res = self
+                        .inner
+                        .session_interest_manager
+                        .filter_session_interested(*id, &[blocks, haves, dont_haves][..])
+                        .await;
+
+                    let filtered_dont_haves = interested_res.pop().unwrap();
+                    let filtered_haves = interested_res.pop().unwrap();
+                    let filtered_keys = interested_res.pop().unwrap();
+
+                    session
+                        .receive_from(peer, filtered_keys, filtered_haves, filtered_dont_haves)
+                        .await;
                 }
             }
         }

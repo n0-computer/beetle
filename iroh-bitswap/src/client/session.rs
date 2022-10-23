@@ -1,8 +1,9 @@
 use std::{ops::Deref, pin::Pin, sync::Arc, time::Duration};
 
 use ahash::AHashSet;
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{ensure, Result};
 use cid::Cid;
+use derivative::Derivative;
 use futures::{future, stream, StreamExt};
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
 use libp2p::PeerId;
@@ -11,6 +12,7 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, Sleep},
 };
+use tokio_context::task::TaskController;
 use tracing::{debug, error, info, warn};
 
 use crate::{network::Network, Block};
@@ -19,7 +21,7 @@ use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
 
 use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
-    session_interest_manager::SessionInterestManager, session_manager::SessionManager,
+    session_manager::SessionManager,
 };
 
 mod cid_queue;
@@ -58,15 +60,23 @@ pub struct Session {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct Inner {
     id: u64,
-    session_manager: SessionManager,
-    session_interest_manager: SessionInterestManager,
     incoming: async_channel::Sender<Op>,
-    closer: oneshot::Sender<()>,
-    worker: JoinHandle<()>,
+    worker: JoinHandle<Option<()>>,
+    #[allow(dead_code)]
+    #[derivative(Debug = "ignore")]
+    task_controller: TaskController,
     notify: async_broadcast::Sender<Block>,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        inc!(BitswapMetrics::SessionsDestroyed);
+        debug!("session {} stopped", self.id);
+    }
 }
 
 impl Session {
@@ -75,7 +85,6 @@ impl Session {
         id: u64,
         session_manager: SessionManager,
         peer_manager: PeerManager,
-        session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         network: Network,
         notify: async_broadcast::Sender<Block>,
@@ -84,6 +93,7 @@ impl Session {
     ) -> Self {
         info!("creating session {}", id);
         let (incoming_s, incoming_r) = async_channel::bounded(128);
+        let mut task_controller = TaskController::new();
 
         let session_want_sender = SessionWantSender::new(
             id,
@@ -94,21 +104,18 @@ impl Session {
         );
 
         let session_wants = SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT);
-        let (closer_s, mut closer_r) = oneshot::channel();
-
         let mut loop_state = LoopState::new(
             id,
+            session_manager,
             session_wants,
             session_want_sender,
-            session_interest_manager.clone(),
             network,
             peer_manager,
             initial_search_delay,
             incoming_s.clone(),
         );
 
-        let rt = tokio::runtime::Handle::current();
-        let worker = rt.spawn(async move {
+        let worker = task_controller.spawn(async move {
             // Session run loop
 
             let mut periodic_search_timer = tokio::time::interval(periodic_search_delay);
@@ -116,12 +123,6 @@ impl Session {
             loop {
                 inc!(BitswapMetrics::SessionLoopTick);
                 tokio::select! {
-                    biased;
-                    _ = &mut closer_r => {
-                        // Shutdown
-                        debug!("shutting down loop");
-                        break;
-                    }
                     oper = incoming_r.recv() => {
                         match oper {
                             Ok(Op::Receive(keys)) => {
@@ -171,12 +172,10 @@ impl Session {
 
         let inner = Arc::new(Inner {
             id,
-            session_manager,
-            session_interest_manager,
             incoming: incoming_s,
             notify,
-            closer: closer_s,
             worker,
+            task_controller,
         });
 
         Session { inner }
@@ -184,31 +183,13 @@ impl Session {
 
     pub async fn stop(self) -> Result<()> {
         let count = Arc::strong_count(&self.inner);
-        info!("stopping session {} ({})", self.inner.id, count,);
+        info!("stopping session {} ({})", self.inner.id, count);
         ensure!(
             count == 2,
             "session {}: too many session refs",
             self.inner.id
         );
 
-        // Remove from the session manager list, to ensure this is the last ref.
-        self.inner
-            .session_manager
-            .remove_session(self.inner.id)
-            .await?;
-
-        let inner = Arc::try_unwrap(self.inner).map_err(|inner| {
-            anyhow!("session refs not shutdown ({})", Arc::strong_count(&inner))
-        })?;
-        inner
-            .closer
-            .send(())
-            .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
-        inner.worker.await?;
-
-        inc!(BitswapMetrics::SessionsDestroyed);
-
-        debug!("session stopped");
         Ok(())
     }
 
@@ -220,9 +201,9 @@ impl Session {
     pub async fn receive_from(
         &self,
         from: Option<PeerId>,
-        keys: &[Cid],
-        haves: &[Cid],
-        dont_haves: &[Cid],
+        keys: Vec<Cid>,
+        haves: Vec<Cid>,
+        dont_haves: Vec<Cid>,
     ) {
         debug!(
             "session:{}: received updates from: {:?} keys: {:?}\n  haves: {:?}\n  dont_haves: {:?}",
@@ -232,18 +213,6 @@ impl Session {
             haves.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
             dont_haves.iter().map(|s| s.to_string()).collect::<Vec<_>>()
         );
-
-        // The SessionManager tells each Session about all keys that it may be
-        // interested in. Here the Session filters the keys to the ones that this
-        // particular Session is interested in.
-        let mut interested_res = self
-            .inner
-            .session_interest_manager
-            .filter_session_interested(self.inner.id, &[keys, haves, dont_haves][..])
-            .await;
-        let dont_haves = interested_res.pop().unwrap();
-        let haves = interested_res.pop().unwrap();
-        let keys = interested_res.pop().unwrap();
 
         // Inform the session want sender that a message has been received
         if let Some(from) = from {
@@ -360,8 +329,8 @@ impl Session {
 struct LoopState {
     id: u64,
     consecutive_ticks: usize,
+    session_manager: SessionManager,
     session_wants: SessionWants,
-    session_interest_manager: SessionInterestManager,
     session_want_sender: SessionWantSender,
     peer_manager: PeerManager,
     latency_tracker: LatencyTracker,
@@ -377,9 +346,9 @@ impl LoopState {
     #[allow(clippy::too_many_arguments)]
     fn new(
         id: u64,
+        session_manager: SessionManager,
         session_wants: SessionWants,
         session_want_sender: SessionWantSender,
-        session_interest_manager: SessionInterestManager,
         network: Network,
         peer_manager: PeerManager,
         initial_search_delay: Duration,
@@ -443,10 +412,10 @@ impl LoopState {
 
         LoopState {
             id,
+            session_manager,
             consecutive_ticks: 0,
             session_wants,
             session_want_sender,
-            session_interest_manager,
             peer_manager,
             latency_tracker: Default::default(),
             base_tick_delay: Duration::from_millis(500),
@@ -470,6 +439,9 @@ impl LoopState {
         }
 
         self.session_want_sender.stop().await?;
+
+        // Remove from the session manager list, to ensure this is the last ref.
+        self.session_manager.remove_session(self.id).await?;
 
         Ok(())
     }
@@ -548,7 +520,8 @@ impl LoopState {
 
         // Inform the SessionInterestManager that this session is no longer
         // expecting to receive the wanted keys
-        self.session_interest_manager
+        self.session_manager
+            .session_interest_manager()
             .remove_session_wants(self.id, &wanted)
             .await;
 
@@ -564,7 +537,8 @@ impl LoopState {
         record!(BitswapMetrics::WantedBlocks, new_keys.len() as u64);
         if !new_keys.is_empty() {
             // Inform the SessionInterestManager that this session is interested in the keys.
-            self.session_interest_manager
+            self.session_manager
+                .session_interest_manager()
                 .record_session_interest(self.id, &new_keys)
                 .await;
             // Tell the SessionWants tracker that that the wants have been requested.

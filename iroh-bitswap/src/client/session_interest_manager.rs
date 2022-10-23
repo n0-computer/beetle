@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 use tokio::sync::RwLock;
@@ -7,7 +5,7 @@ use tracing::debug;
 
 use crate::Block;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug)]
 pub struct SessionInterestManager {
     /// Map of cids -> sessions -> bool
     ///
@@ -17,7 +15,7 @@ pub struct SessionInterestManager {
     /// Note: Once the block is received the session no longer wants
     /// the block, but still wants to receive messages from peers who have
     /// the block as they may have other blocks the session is interested in.
-    wants: Arc<RwLock<AHashMap<Cid, AHashMap<u64, bool>>>>,
+    wants: RwLock<AHashMap<Cid, AHashMap<u64, bool>>>,
 }
 
 impl SessionInterestManager {
