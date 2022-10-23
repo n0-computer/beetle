@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ahash::AHashMap;
 use anyhow::Result;
@@ -24,9 +24,12 @@ use libp2p::swarm::{
     NotifyHandler, PollParameters,
 };
 use libp2p::{Multiaddr, PeerId};
+use peer_manager::{PeerAction, PeerManager, PeerState};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
+
+use crate::peer_manager::PeerStateChange;
 
 use self::client::{Client, Config as ClientConfig};
 use self::message::BitswapMessage;
@@ -40,6 +43,7 @@ mod client;
 mod error;
 mod handler;
 mod network;
+mod peer_manager;
 mod prefix;
 mod protocol;
 mod server;
@@ -65,7 +69,7 @@ pub struct Bitswap<S: Store> {
     network: Network,
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
-    peers: Arc<Mutex<AHashMap<PeerId, PeerState>>>,
+    peer_manager: PeerManager,
     dials: Arc<Mutex<DialMap>>,
     /// Set to true when dialing should be disabled because we have reached the conn limit.
     pause_dialing: bool,
@@ -75,27 +79,6 @@ pub struct Bitswap<S: Store> {
     peers_connected: mpsc::Sender<PeerId>,
     peers_disconnected: mpsc::Sender<PeerId>,
     _workers: Arc<Vec<JoinHandle<()>>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PeerState {
-    Connected(ConnectionId),
-    Responsive(ConnectionId, ProtocolId),
-    Unresponsive,
-    Disconnected,
-    DialFailure(Instant),
-}
-
-impl Default for PeerState {
-    fn default() -> Self {
-        PeerState::Disconnected
-    }
-}
-
-impl PeerState {
-    fn is_connected(self) -> bool {
-        matches!(self, PeerState::Connected(_) | PeerState::Responsive(_, _))
-    }
 }
 
 #[derive(Debug)]
@@ -194,7 +177,7 @@ impl<S: Store> Bitswap<S> {
             network,
             protocol_config: config.protocol,
             idle_timeout: config.idle_timeout,
-            peers: Default::default(),
+            peer_manager: Default::default(),
             dials: Default::default(),
             pause_dialing: false,
             server,
@@ -232,12 +215,12 @@ impl<S: Store> Bitswap<S> {
 
     /// Called on identify events from swarm, informing us about available protocols of this peer.
     pub fn on_identify(&self, peer: &PeerId, protocols: &[String]) {
-        if let Some(PeerState::Connected(conn_id)) = self.get_peer_state(peer) {
+        if let Some(PeerState::Connected(_)) = self.get_peer_state(peer) {
             let mut protocols: Vec<ProtocolId> =
                 protocols.iter().filter_map(ProtocolId::try_from).collect();
             protocols.sort();
             if let Some(best_protocol) = protocols.last() {
-                self.set_peer_state(peer, PeerState::Responsive(conn_id, *best_protocol));
+                self.set_peer_state(*peer, PeerStateChange::Responsive(None, *best_protocol));
             }
         }
     }
@@ -299,74 +282,18 @@ impl<S: Store> Bitswap<S> {
     }
 
     fn get_peer_state(&self, peer: &PeerId) -> Option<PeerState> {
-        self.peers.lock().unwrap().get(peer).copied()
+        self.peer_manager.get_peer_state(peer)
     }
 
-    fn set_peer_state(&self, peer: &PeerId, new_state: PeerState) {
-        let peers = &mut *self.peers.lock().unwrap();
-        let peer = *peer;
-        match peers.entry(peer) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                let old_state = *entry.get();
-                // skip non state changes
-                if old_state == new_state {
-                    return;
-                }
-                if let PeerState::Connected(old_id) = old_state {
-                    if let PeerState::Connected(new_id) = new_state {
-                        // TODO: better understand what this means and how to handle it.
-                        warn!(
-                            "Peer {}: detected connection id change: {:?} => {:?}",
-                            peer, old_id, new_id
-                        );
-                        return;
-                    }
-                }
-
-                if new_state == PeerState::Disconnected {
-                    entry.remove();
-                } else {
-                    *entry.get_mut() = new_state;
-                }
-                match new_state {
-                    PeerState::DialFailure(_)
-                    | PeerState::Disconnected
-                    | PeerState::Unresponsive => {
-                        if old_state.is_connected() {
-                            inc!(BitswapMetrics::DisconnectedPeers);
-                            self.peer_disconnected(peer);
-                        }
-                    }
-                    PeerState::Connected(_) => {
-                        // nothing, just recorded until we receive protocol confirmation
-                        inc!(BitswapMetrics::ConnectedPeers);
-                    }
-                    PeerState::Responsive(_, _) => {
-                        inc!(BitswapMetrics::ResponsivePeers);
-                        self.peer_connected(peer);
-                    }
-                }
+    fn set_peer_state(&self, peer: PeerId, new_state: PeerStateChange) {
+        match self.peer_manager.set_peer_state(peer, new_state) {
+            Some(PeerAction::Connected) => {
+                self.peer_connected(peer);
             }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                if new_state != PeerState::Disconnected {
-                    entry.insert(new_state);
-                }
-                match new_state {
-                    PeerState::DialFailure(_)
-                    | PeerState::Disconnected
-                    | PeerState::Unresponsive => {
-                        inc!(BitswapMetrics::DisconnectedPeers);
-                        self.peer_disconnected(peer);
-                    }
-                    PeerState::Connected(_) => {
-                        inc!(BitswapMetrics::ConnectedPeers);
-                    }
-                    PeerState::Responsive(_, _) => {
-                        inc!(BitswapMetrics::ResponsivePeers);
-                        self.peer_connected(peer);
-                    }
-                }
+            Some(PeerAction::Disconnected) => {
+                self.peer_disconnected(peer);
             }
+            None => {}
         }
     }
 }
@@ -422,23 +349,20 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         other_established: usize,
     ) {
         trace!("connection established {} ({})", peer_id, other_established);
-        self.set_peer_state(peer_id, PeerState::Connected(*connection));
+        self.set_peer_state(*peer_id, PeerStateChange::Connected(*connection));
         self.pause_dialing = false;
     }
 
     fn inject_connection_closed(
         &mut self,
         peer_id: &PeerId,
-        _conn: &ConnectionId,
+        connection: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
-        remaining_established: usize,
+        _remaining_established: usize,
     ) {
         self.pause_dialing = false;
-        if remaining_established == 0 {
-            // Last connection, close it
-            self.set_peer_state(peer_id, PeerState::Disconnected)
-        }
+        self.set_peer_state(*peer_id, PeerStateChange::Disconnected(*connection));
     }
 
     fn inject_dial_failure(
@@ -450,10 +374,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         if let Some(peer_id) = peer_id {
             if let DialError::ConnectionLimit(_) = error {
                 self.pause_dialing = true;
-                self.set_peer_state(&peer_id, PeerState::Disconnected);
-            } else {
-                self.set_peer_state(&peer_id, PeerState::DialFailure(Instant::now()));
             }
+            self.set_peer_state(peer_id, PeerStateChange::DialFailure);
 
             trace!("inject_dial_failure {}, {:?}", peer_id, error);
             let dials = &mut self.dials.lock().unwrap();
@@ -469,7 +391,10 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         // trace!("inject_event from {}, event: {:?}", peer_id, event);
         match event {
             HandlerEvent::Connected { protocol } => {
-                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
+                self.set_peer_state(
+                    peer_id,
+                    PeerStateChange::Responsive(Some(connection), protocol),
+                );
                 {
                     let dials = &mut *self.dials.lock().unwrap();
                     if let Some(mut dials) = dials.remove(&peer_id) {
@@ -482,7 +407,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 }
             }
             HandlerEvent::ProtocolNotSuppported => {
-                self.set_peer_state(&peer_id, PeerState::Unresponsive);
+                self.set_peer_state(peer_id, PeerStateChange::Unresponsive);
 
                 let dials = &mut *self.dials.lock().unwrap();
                 if let Some(mut dials) = dials.remove(&peer_id) {
@@ -498,7 +423,10 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 protocol,
             } => {
                 // mark peer as responsive
-                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
+                self.set_peer_state(
+                    peer_id,
+                    PeerStateChange::Responsive(Some(connection), protocol),
+                );
 
                 message.verify_blocks();
                 self.receive_message(peer_id, message);
@@ -529,16 +457,22 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     }
                     OutEvent::Dial { peer, response, id } => {
                         match self.get_peer_state(&peer) {
-                            Some(PeerState::Responsive(conn, protocol_id)) => {
+                            Some(PeerState::Responsive(conns, protocol_id)) => {
                                 // already connected
-                                if let Err(err) = response.send(Ok((conn, Some(protocol_id)))) {
+                                if let Err(err) = response.send(Ok((
+                                    conns.into_iter().next().expect("missing conns"),
+                                    Some(protocol_id),
+                                ))) {
                                     debug!("dial:{}: failed to send dial response {:?}", id, err)
                                 }
                                 continue;
                             }
-                            Some(PeerState::Connected(conn)) => {
+                            Some(PeerState::Connected(conns)) => {
                                 // already connected
-                                if let Err(err) = response.send(Ok((conn, None))) {
+                                if let Err(err) = response.send(Ok((
+                                    conns.into_iter().next().expect("missing conn"),
+                                    None,
+                                ))) {
                                     debug!("dial:{}: failed to send dial response {:?}", id, err)
                                 }
                                 continue;
@@ -601,8 +535,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                         });
                     }
                     OutEvent::ProtectPeer { peer } => {
-                        if let Some(PeerState::Responsive(conn_id, _)) = self.get_peer_state(&peer)
-                        {
+                        if let Some(PeerState::Responsive(conns, _)) = self.get_peer_state(&peer) {
+                            let conn_id = conns.into_iter().next().expect("missing conn");
                             return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                 peer_id: peer,
                                 handler: NotifyHandler::One(conn_id),
@@ -611,9 +545,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                         }
                     }
                     OutEvent::UnprotectPeer { peer, response } => {
-                        if let Some(PeerState::Responsive(conn_id, _)) = self.get_peer_state(&peer)
-                        {
+                        if let Some(PeerState::Responsive(conns, _)) = self.get_peer_state(&peer) {
                             let _ = response.send(true);
+                            let conn_id = conns.into_iter().next().expect("missing conn");
                             return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                 peer_id: peer,
                                 handler: NotifyHandler::One(conn_id),
