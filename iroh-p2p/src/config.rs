@@ -167,14 +167,14 @@ impl Default for Libp2pConfig {
             relay_client: true,
             gossipsub: true,
             bitswap: true,
-            max_conns_pending_out: 256,
-            max_conns_pending_in: 256,
-            max_conns_in: 256,
-            max_conns_out: 512,
-            max_conns_per_peer: 8,
+            max_conns_pending_out: 128,
+            max_conns_pending_in: 64,
+            max_conns_in: 128,
+            max_conns_out: 256,
+            max_conns_per_peer: 4,
             notify_handler_buffer_size: 256,
             connection_event_buffer_size: 256,
-            dial_concurrency_factor: 8,
+            dial_concurrency_factor: 4,
         }
     }
 }
