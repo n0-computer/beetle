@@ -1,13 +1,13 @@
-use std::sync::Arc;
-
 use ahash::AHashMap;
 use cid::Cid;
 use libp2p::PeerId;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct BlockPresenceManager {
-    presence: Arc<RwLock<AHashMap<Cid, AHashMap<PeerId, bool>>>>,
+    /// Map of cids to list of peers and the knowledge we have about having or not having
+    /// the block.
+    presence: RwLock<AHashMap<Cid, AHashMap<PeerId, bool>>>,
 }
 
 impl BlockPresenceManager {

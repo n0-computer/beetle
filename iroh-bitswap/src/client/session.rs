@@ -19,7 +19,7 @@ use crate::{network::Network, Block};
 
 use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
 
-use super::{block_presence_manager::BlockPresenceManager, session_manager::SessionManager};
+use super::session_manager::SessionManager;
 
 mod cid_queue;
 mod peer_response_tracker;
@@ -81,7 +81,6 @@ impl Session {
     pub async fn new(
         id: u64,
         session_manager: SessionManager,
-        block_presence_manager: BlockPresenceManager,
         network: Network,
         notify: async_broadcast::Sender<Block>,
         initial_search_delay: Duration,
@@ -91,12 +90,8 @@ impl Session {
         let (incoming_s, incoming_r) = async_channel::bounded(128);
         let mut task_controller = TaskController::new();
 
-        let session_want_sender = SessionWantSender::new(
-            id,
-            session_manager.clone(),
-            block_presence_manager,
-            incoming_s.clone(),
-        );
+        let session_want_sender =
+            SessionWantSender::new(id, session_manager.clone(), incoming_s.clone());
 
         let session_wants = SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT);
         let mut loop_state = LoopState::new(

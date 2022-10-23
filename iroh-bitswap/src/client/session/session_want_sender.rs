@@ -9,9 +9,8 @@ use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error, info, warn};
 
-use crate::client::{
-    block_presence_manager::BlockPresenceManager, session_manager::SessionManager,
-};
+use crate::client::block_presence_manager::BlockPresenceManager;
+use crate::client::session_manager::SessionManager;
 
 use super::{
     peer_response_tracker::PeerResponseTracker, sent_want_blocks_tracker::SentWantBlocksTracker,
@@ -139,7 +138,6 @@ impl SessionWantSender {
     pub(super) fn new(
         session_id: u64,
         session_manager: SessionManager,
-        block_presence_manager: BlockPresenceManager,
         session_ops: async_channel::Sender<super::Op>,
     ) -> Self {
         debug!("session:{}: session_want_sender create", session_id);
@@ -150,13 +148,8 @@ impl SessionWantSender {
             id: session_id,
             changes: changes_s.clone(),
         };
-        let mut loop_state = LoopState::new(
-            changes_r.clone(),
-            signaler,
-            session_manager,
-            block_presence_manager,
-            session_ops,
-        );
+        let mut loop_state =
+            LoopState::new(changes_r.clone(), signaler, session_manager, session_ops);
         let rt = tokio::runtime::Handle::current();
 
         let worker = rt.spawn(async move {
@@ -389,8 +382,6 @@ struct LoopState {
     peer_response_tracker: PeerResponseTracker,
     /// Cancels wants.
     session_manager: SessionManager,
-    /// Keeps track of which peer has / doesn't have a block.
-    block_presence_manager: BlockPresenceManager,
     session_ops: async_channel::Sender<super::Op>,
 }
 
@@ -399,7 +390,6 @@ impl LoopState {
         changes: async_channel::Receiver<Change>,
         signaler: Signaler,
         session_manager: SessionManager,
-        block_presence_manager: BlockPresenceManager,
         session_ops: async_channel::Sender<super::Op>,
     ) -> Self {
         LoopState {
@@ -410,7 +400,6 @@ impl LoopState {
             sent_want_blocks_tracker: SentWantBlocksTracker::default(),
             peer_response_tracker: PeerResponseTracker::default(),
             session_manager,
-            block_presence_manager,
             session_ops,
         }
     }
@@ -589,7 +578,11 @@ impl LoopState {
             // whether the peer has the block
             for peer in &peers {
                 want_info
-                    .update_want_block_presence(&self.block_presence_manager, &cid, *peer)
+                    .update_want_block_presence(
+                        self.session_manager.block_presence_manager(),
+                        &cid,
+                        *peer,
+                    )
                     .await;
             }
 
@@ -654,8 +647,12 @@ impl LoopState {
 
                 // Update the block presence for the peer
                 if let Some(wi) = self.wants.get_mut(cid) {
-                    wi.update_want_block_presence(&self.block_presence_manager, cid, update.from)
-                        .await;
+                    wi.update_want_block_presence(
+                        self.session_manager.block_presence_manager(),
+                        cid,
+                        update.from,
+                    )
+                    .await;
                 }
 
                 // Check if the DONT_HAVE is in response to a want-block
@@ -683,7 +680,7 @@ impl LoopState {
                     // Update the block presence for the peer
                     if let Some(wi) = self.wants.get_mut(cid) {
                         wi.update_want_block_presence(
-                            &self.block_presence_manager,
+                            self.session_manager.block_presence_manager(),
                             cid,
                             update.from,
                         )
@@ -704,7 +701,12 @@ impl LoopState {
             let mut to_remove = Vec::new();
             for peer in &prune_peers {
                 for cid in self.wants.keys() {
-                    if self.block_presence_manager.peer_has_block(peer, cid).await {
+                    if self
+                        .session_manager
+                        .block_presence_manager()
+                        .peer_has_block(peer, cid)
+                        .await
+                    {
                         to_remove.push(*peer);
                     }
                 }
@@ -768,7 +770,8 @@ impl LoopState {
         // that we've exhausted available peers
         if !wants.is_empty() {
             let exhausted = self
-                .block_presence_manager
+                .session_manager
+                .block_presence_manager()
                 .all_peers_do_not_have_block(
                     &self
                         .session_manager
@@ -932,8 +935,12 @@ impl LoopState {
     async fn update_wants_peer_availability(&mut self, peer: &PeerId, is_now_available: bool) {
         for (cid, wi) in &mut self.wants {
             if is_now_available {
-                wi.update_want_block_presence(&self.block_presence_manager, cid, *peer)
-                    .await;
+                wi.update_want_block_presence(
+                    self.session_manager.block_presence_manager(),
+                    cid,
+                    *peer,
+                )
+                .await;
             } else {
                 wi.remove_peer(peer).await;
             }
