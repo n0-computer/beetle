@@ -5,6 +5,7 @@ use iroh_rpc_client::Client;
 use libp2p::{
     core::{
         self,
+        either::EitherOutput,
         muxing::StreamMuxerBox,
         transport::{timeout::TransportTimeout, Boxed, OrTransport},
     },
@@ -29,10 +30,12 @@ async fn build_transport(
     // TODO: make transports configurable
 
     let tcp_config = libp2p::tcp::GenTcpConfig::default().port_reuse(true);
-    let transport = libp2p::tcp::TokioTcpTransport::new(tcp_config.clone());
+    let tcp_transport = libp2p::tcp::TokioTcpTransport::new(tcp_config.clone());
+    let quic_transport = libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(keypair));
+
     let transport =
         libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpTransport::new(tcp_config))
-            .or_transport(transport);
+            .or_transport(tcp_transport);
 
     // TODO: configurable
     let transport = TransportTimeout::new(transport, Duration::from_secs(10));
@@ -68,22 +71,35 @@ async fn build_transport(
             );
 
         let transport = OrTransport::new(relay_transport, transport);
-        let transport = transport
+        let tcp_transport = transport
             .upgrade(core::upgrade::Version::V1Lazy)
             .authenticate(auth_config)
             .multiplex(muxer_config)
             .timeout(connection_timeout)
+            .map(|(peer, muxer), _| (peer, StreamMuxerBox::new(muxer)));
+
+        let transport = OrTransport::new(quic_transport, tcp_transport)
+            .map(|either_output, _| match either_output {
+                EitherOutput::First((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+                EitherOutput::Second((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+            })
             .boxed();
 
         (transport, Some(relay_client))
     } else {
-        let transport = transport
+        let tcp_transport = transport
             .upgrade(core::upgrade::Version::V1Lazy)
             .authenticate(auth_config)
             .multiplex(muxer_config)
             .timeout(connection_timeout)
-            .boxed();
+            .map(|(peer, muxer), _| (peer, StreamMuxerBox::new(muxer)));
 
+        let transport = OrTransport::new(quic_transport, tcp_transport)
+            .map(|either_output, _| match either_output {
+                EitherOutput::First((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+                EitherOutput::Second((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+            })
+            .boxed();
         (transport, None)
     }
 }
