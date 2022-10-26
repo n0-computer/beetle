@@ -4,15 +4,17 @@
 
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
+use client::BlockReceiver;
 use handler::{BitswapHandler, HandlerEvent};
 use iroh_metrics::record;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
@@ -24,12 +26,9 @@ use libp2p::swarm::{
     NotifyHandler, PollParameters,
 };
 use libp2p::{Multiaddr, PeerId};
-use peer_manager::{PeerAction, PeerManager, PeerState};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tracing::{debug, trace, warn};
-
-use crate::peer_manager::PeerStateChange;
+use tracing::{debug, error, trace, warn};
 
 use self::client::{Client, Config as ClientConfig};
 use self::message::BitswapMessage;
@@ -43,7 +42,6 @@ mod client;
 mod error;
 mod handler;
 mod network;
-mod peer_manager;
 mod prefix;
 mod protocol;
 mod server;
@@ -69,16 +67,34 @@ pub struct Bitswap<S: Store> {
     network: Network,
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
-    peer_manager: PeerManager,
+    peers: Arc<Mutex<AHashMap<PeerId, PeerState>>>,
     dials: Arc<Mutex<DialMap>>,
     /// Set to true when dialing should be disabled because we have reached the conn limit.
     pause_dialing: bool,
-    client: Client<S>,
-    server: Server<S>,
-    incoming_messages: mpsc::Sender<(PeerId, BitswapMessage)>,
-    peers_connected: mpsc::Sender<PeerId>,
-    peers_disconnected: mpsc::Sender<PeerId>,
+    msg_sender: mpsc::Sender<Message>,
     _workers: Arc<Vec<JoinHandle<()>>>,
+    _store: PhantomData<S>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerState {
+    Connected(ConnectionId),
+    Responsive(ConnectionId, ProtocolId),
+    Unresponsive,
+    Disconnected,
+    DialFailure(Instant),
+}
+
+impl Default for PeerState {
+    fn default() -> Self {
+        PeerState::Disconnected
+    }
+}
+
+impl PeerState {
+    fn is_connected(self) -> bool {
+        matches!(self, PeerState::Connected(_) | PeerState::Responsive(_, _))
+    }
 }
 
 #[derive(Debug)]
@@ -107,11 +123,36 @@ pub trait Store: Debug + Clone + Send + Sync + 'static {
     async fn has(&self, cid: &Cid) -> Result<bool>;
 }
 
+#[derive(Debug, Clone)]
+enum Message {
+    Connected(PeerId),
+    Disconnected(PeerId),
+    IncomingMessage {
+        from: PeerId,
+        message: BitswapMessage,
+    },
+    NotifyNewBlocks(Vec<Block>),
+    GetBlock {
+        key: Cid,
+        response: oneshot::Sender<Result<Block>>,
+    },
+    GetBlockWithSessionId {
+        session_id. u64,
+        key: Cid,
+        response: oneshot::Sender<Result<Block>>,
+    },
+    GetBlocksWithSessionId {
+        session_id. u64,
+        keys: Vec<Cid>,
+        response: oneshot::Sender<Result<BlockReceiver>>,
+    },
+}
+
 impl<S: Store> Bitswap<S> {
     pub async fn new(self_id: PeerId, store: S, config: Config) -> Self {
         let network = Network::new(self_id);
         let server = Server::new(network.clone(), store.clone(), config.server).await;
-        let client = Client::new(
+        let mut client = Client::new(
             network.clone(),
             store,
             server.received_blocks_cb(),
@@ -119,56 +160,42 @@ impl<S: Store> Bitswap<S> {
         )
         .await;
 
-        // EVIL: must eventually not be unbounded !!!
-        let (sender_msg, mut receiver_msg) = mpsc::channel(2048);
-        let (sender_con, mut receiver_con) = mpsc::channel(2048);
-        let (sender_dis, mut receiver_dis) = mpsc::channel(2048);
+        let (sender, mut receiver) = mpsc::channel(2048);
 
         let mut workers = Vec::new();
         workers.push(tokio::task::spawn({
             let server = server.clone();
-            let client = client.clone();
 
             async move {
                 // process messages serially but without blocking the p2p loop
-                while let Some((peer, message)) = receiver_msg.recv().await {
-                    futures::future::join(
-                        client.receive_message(&peer, &message),
-                        server.receive_message(&peer, &message),
-                    )
-                    .await;
+                while let Some(msg) = receiver.recv().await {
+                    match msg {
+                        Message::Connected(peer) => {
+                            let _ = client.peer_disconnected(&peer).await;
+                            let _ = server.peer_disconnected(&peer).await;
+                        }
+                        Message::Disconnected(peer) => {
+                            let _ = client.peer_disconnected(&peer).await;
+                            let _ = server.peer_disconnected(&peer).await;
+                        }
+                        Message::IncomingMessage { from, message } => {
+                            let _ = client.receive_message(&from, &message).await;
+                            let _ = server.receive_message(&from, &message).await;
+                        }
+                        Message::NotifyNewBlocks(blocks) => {
+                            let _ = client.notify_new_blocks(&blocks).await;
+                            let _ = server.notify_new_blocks(&blocks).await;
+                        }
+                    }
                 }
-            }
-        }));
 
-        workers.push(tokio::task::spawn({
-            let server = server.clone();
-            let client = client.clone();
-
-            async move {
-                // process messages serially but without blocking the p2p loop
-                while let Some(peer) = receiver_con.recv().await {
-                    futures::future::join(
-                        client.peer_connected(&peer),
-                        server.peer_connected(&peer),
-                    )
-                    .await;
+                // shutdown
+                let (a, b) = futures::future::join(client.stop(), server.stop()).await;
+                if let Err(err) = a {
+                    error!("failed to shutdown client: {:?}", err);
                 }
-            }
-        }));
-
-        workers.push(tokio::task::spawn({
-            let server = server.clone();
-            let client = client.clone();
-
-            async move {
-                // process messages serially but without blocking the p2p loop
-                while let Some(peer) = receiver_dis.recv().await {
-                    futures::future::join(
-                        client.peer_disconnected(&peer),
-                        server.peer_disconnected(&peer),
-                    )
-                    .await;
+                if let Err(err) = b {
+                    error!("failed to shutdown server: {:?}", err);
                 }
             }
         }));
@@ -177,123 +204,169 @@ impl<S: Store> Bitswap<S> {
             network,
             protocol_config: config.protocol,
             idle_timeout: config.idle_timeout,
-            peer_manager: Default::default(),
+            peers: Default::default(),
             dials: Default::default(),
             pause_dialing: false,
-            server,
-            client,
-            incoming_messages: sender_msg,
-            peers_connected: sender_con,
-            peers_disconnected: sender_dis,
+            msg_sender: sender,
             _workers: Arc::new(workers),
+            _store: Default::default(),
         }
-    }
-
-    pub fn server(&self) -> &Server<S> {
-        &self.server
-    }
-
-    pub fn client(&self) -> &Client<S> {
-        &self.client
     }
 
     pub async fn stop(self) -> Result<()> {
         self.network.stop();
-        let (a, b) = futures::future::join(self.client.stop(), self.server.stop()).await;
-        a?;
-        b?;
 
         Ok(())
     }
 
-    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
-        self.client.notify_new_blocks(blocks).await?;
-        self.server.notify_new_blocks(blocks).await?;
+    pub fn notify_new_blocks(&self, blocks: &[Block]) {
+        self.send(Message::NotifyNewBlocks(blocks.to_vec()));
+    }
 
-        Ok(())
+    /// Attempts to retrieve a particular block from peers.
+    pub async fn get_block(&self, key: &Cid) -> Result<Block> {
+        let (s, r) = oneshot::channel();
+        self.send(Message::GetBlock {
+            key: *key,
+            response: s,
+        });
+        let block = r.await??;
+        Ok(block)
+    }
+
+    pub async fn get_block_with_session_id(&self, session_id: u64, key: &Cid) -> Result<Block> {
+        let (s, r) = oneshot::channel();
+        self.send(Message::GetBlockWithSessionId {
+            session_id,
+            key: *key,
+            response: s,
+        });
+        let block = r.await??;
+        Ok(block)
+    }
+
+    pub async fn get_blocks_with_session_id(
+        &self,
+        session_id: u64,
+        keys: &[Cid],
+    ) -> Result<BlockReceiver> {
+        let (s, r) = oneshot::channel();
+        self.send(Message::GetBlocksWithSessionId {
+            session_id,
+            keys: keys.to_vec(),
+            response: s,
+        });
+        let br = r.await??;
+        Ok(br)
     }
 
     /// Called on identify events from swarm, informing us about available protocols of this peer.
     pub fn on_identify(&self, peer: &PeerId, protocols: &[String]) {
-        if let Some(PeerState::Connected(_)) = self.get_peer_state(peer) {
+        if let Some(PeerState::Connected(conn_id)) = self.get_peer_state(peer) {
             let mut protocols: Vec<ProtocolId> =
                 protocols.iter().filter_map(ProtocolId::try_from).collect();
             protocols.sort();
             if let Some(best_protocol) = protocols.last() {
-                self.set_peer_state(*peer, PeerStateChange::Responsive(None, *best_protocol));
+                self.set_peer_state(peer, PeerState::Responsive(conn_id, *best_protocol));
             }
         }
     }
 
-    pub async fn stat(&self) -> Result<Stat> {
-        let client_stat = self.client.stat().await?;
-        let server_stat = self.server.stat().await?;
-
-        Ok(Stat {
-            wantlist: client_stat.wantlist,
-            blocks_received: client_stat.blocks_received,
-            data_received: client_stat.data_received,
-            dup_blks_received: client_stat.dup_blks_received,
-            dup_data_received: client_stat.dup_data_received,
-            messages_received: client_stat.messages_received,
-            peers: server_stat.peers,
-            blocks_sent: server_stat.blocks_sent,
-            data_sent: server_stat.data_sent,
-            provide_buf_len: server_stat.provide_buf_len,
-        })
-    }
-
-    pub async fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
-        if peer == self.network.self_id() {
-            return self.client.get_wantlist().await.into_iter().collect();
+    fn send(&self, message: Message) {
+        if let Err(err) = self.msg_sender.try_send(message) {
+            warn!(
+                "failed to process message, dropping: {:?}, {:?}",
+                err, message
+            );
         }
-
-        self.server.wantlist_for_peer(peer).await
     }
 
     fn peer_connected(&self, peer: PeerId) {
-        if let Err(err) = self.peers_connected.try_send(peer) {
-            warn!(
-                "failed to process peer connection from {}: {:?}, dropping",
-                peer, err
-            );
-        }
+        self.send(Message::Connected(peer));
     }
 
     fn peer_disconnected(&self, peer: PeerId) {
-        if let Err(err) = self.peers_disconnected.try_send(peer) {
-            warn!(
-                "failed to process peer disconnection from {}: {:?}, dropping",
-                peer, err
-            );
-        }
+        self.send(Message::Disconnected(peer));
     }
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
         inc!(BitswapMetrics::MessagesReceived);
         record!(BitswapMetrics::MessageBytesIn, message.encoded_len() as u64);
-        // TODO: Handle backpressure properly
-        if let Err(err) = self.incoming_messages.try_send((peer, message)) {
-            warn!(
-                "failed to receive message from {}: {:?}, dropping",
-                peer, err
-            );
-        }
+        self.send(Message::IncomingMessage {
+            from: peer,
+            message,
+        });
     }
 
     fn get_peer_state(&self, peer: &PeerId) -> Option<PeerState> {
-        self.peer_manager.get_peer_state(peer)
+        self.peers.lock().unwrap().get(peer).copied()
     }
 
-    fn set_peer_state(&self, peer: PeerId, new_state: PeerStateChange) {
-        match self.peer_manager.set_peer_state(peer, new_state) {
-            Some(PeerAction::Connected) => {
-                self.peer_connected(peer);
+    fn set_peer_state(&self, peer: &PeerId, new_state: PeerState) {
+        let peers = &mut *self.peers.lock().unwrap();
+        let peer = *peer;
+        match peers.entry(peer) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let old_state = *entry.get();
+                // skip non state changes
+                if old_state == new_state {
+                    return;
+                }
+                if let PeerState::Connected(old_id) = old_state {
+                    if let PeerState::Connected(new_id) = new_state {
+                        // TODO: better understand what this means and how to handle it.
+                        warn!(
+                            "Peer {}: detected connection id change: {:?} => {:?}",
+                            peer, old_id, new_id
+                        );
+                        return;
+                    }
+                }
+
+                if new_state == PeerState::Disconnected {
+                    entry.remove();
+                } else {
+                    *entry.get_mut() = new_state;
+                }
+                match new_state {
+                    PeerState::DialFailure(_)
+                    | PeerState::Disconnected
+                    | PeerState::Unresponsive => {
+                        if old_state.is_connected() {
+                            inc!(BitswapMetrics::DisconnectedPeers);
+                            self.peer_disconnected(peer);
+                        }
+                    }
+                    PeerState::Connected(_) => {
+                        // nothing, just recorded until we receive protocol confirmation
+                        inc!(BitswapMetrics::ConnectedPeers);
+                    }
+                    PeerState::Responsive(_, _) => {
+                        inc!(BitswapMetrics::ResponsivePeers);
+                        self.peer_connected(peer);
+                    }
+                }
             }
-            Some(PeerAction::Disconnected) => {
-                self.peer_disconnected(peer);
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                if new_state != PeerState::Disconnected {
+                    entry.insert(new_state);
+                }
+                match new_state {
+                    PeerState::DialFailure(_)
+                    | PeerState::Disconnected
+                    | PeerState::Unresponsive => {
+                        inc!(BitswapMetrics::DisconnectedPeers);
+                        self.peer_disconnected(peer);
+                    }
+                    PeerState::Connected(_) => {
+                        inc!(BitswapMetrics::ConnectedPeers);
+                    }
+                    PeerState::Responsive(_, _) => {
+                        inc!(BitswapMetrics::ResponsivePeers);
+                        self.peer_connected(peer);
+                    }
+                }
             }
-            None => {}
         }
     }
 }
@@ -349,20 +422,23 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         other_established: usize,
     ) {
         trace!("connection established {} ({})", peer_id, other_established);
-        self.set_peer_state(*peer_id, PeerStateChange::Connected(*connection));
+        self.set_peer_state(peer_id, PeerState::Connected(*connection));
         self.pause_dialing = false;
     }
 
     fn inject_connection_closed(
         &mut self,
         peer_id: &PeerId,
-        connection: &ConnectionId,
+        _conn: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
-        _remaining_established: usize,
+        remaining_established: usize,
     ) {
         self.pause_dialing = false;
-        self.set_peer_state(*peer_id, PeerStateChange::Disconnected(*connection));
+        if remaining_established == 0 {
+            // Last connection, close it
+            self.set_peer_state(peer_id, PeerState::Disconnected)
+        }
     }
 
     fn inject_dial_failure(
@@ -374,8 +450,10 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         if let Some(peer_id) = peer_id {
             if let DialError::ConnectionLimit(_) = error {
                 self.pause_dialing = true;
+                self.set_peer_state(&peer_id, PeerState::Disconnected);
+            } else {
+                self.set_peer_state(&peer_id, PeerState::DialFailure(Instant::now()));
             }
-            self.set_peer_state(peer_id, PeerStateChange::DialFailure);
 
             trace!("inject_dial_failure {}, {:?}", peer_id, error);
             let dials = &mut self.dials.lock().unwrap();
@@ -391,10 +469,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         // trace!("inject_event from {}, event: {:?}", peer_id, event);
         match event {
             HandlerEvent::Connected { protocol } => {
-                self.set_peer_state(
-                    peer_id,
-                    PeerStateChange::Responsive(Some(connection), protocol),
-                );
+                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
                 {
                     let dials = &mut *self.dials.lock().unwrap();
                     if let Some(mut dials) = dials.remove(&peer_id) {
@@ -407,7 +482,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 }
             }
             HandlerEvent::ProtocolNotSuppported => {
-                self.set_peer_state(peer_id, PeerStateChange::Unresponsive);
+                self.set_peer_state(&peer_id, PeerState::Unresponsive);
 
                 let dials = &mut *self.dials.lock().unwrap();
                 if let Some(mut dials) = dials.remove(&peer_id) {
@@ -423,10 +498,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 protocol,
             } => {
                 // mark peer as responsive
-                self.set_peer_state(
-                    peer_id,
-                    PeerStateChange::Responsive(Some(connection), protocol),
-                );
+                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
 
                 message.verify_blocks();
                 self.receive_message(peer_id, message);
@@ -457,22 +529,16 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     }
                     OutEvent::Dial { peer, response, id } => {
                         match self.get_peer_state(&peer) {
-                            Some(PeerState::Responsive(conns, protocol_id)) => {
+                            Some(PeerState::Responsive(conn, protocol_id)) => {
                                 // already connected
-                                if let Err(err) = response.send(Ok((
-                                    conns.into_iter().next().expect("missing conns"),
-                                    Some(protocol_id),
-                                ))) {
+                                if let Err(err) = response.send(Ok((conn, Some(protocol_id)))) {
                                     debug!("dial:{}: failed to send dial response {:?}", id, err)
                                 }
                                 continue;
                             }
-                            Some(PeerState::Connected(conns)) => {
+                            Some(PeerState::Connected(conn)) => {
                                 // already connected
-                                if let Err(err) = response.send(Ok((
-                                    conns.into_iter().next().expect("missing conn"),
-                                    None,
-                                ))) {
+                                if let Err(err) = response.send(Ok((conn, None))) {
                                     debug!("dial:{}: failed to send dial response {:?}", id, err)
                                 }
                                 continue;
@@ -535,8 +601,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                         });
                     }
                     OutEvent::ProtectPeer { peer } => {
-                        if let Some(PeerState::Responsive(conns, _)) = self.get_peer_state(&peer) {
-                            let conn_id = conns.into_iter().next().expect("missing conn");
+                        if let Some(PeerState::Responsive(conn_id, _)) = self.get_peer_state(&peer)
+                        {
                             return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                 peer_id: peer,
                                 handler: NotifyHandler::One(conn_id),
@@ -545,9 +611,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                         }
                     }
                     OutEvent::UnprotectPeer { peer, response } => {
-                        if let Some(PeerState::Responsive(conns, _)) = self.get_peer_state(&peer) {
+                        if let Some(PeerState::Responsive(conn_id, _)) = self.get_peer_state(&peer)
+                        {
                             let _ = response.send(true);
-                            let conn_id = conns.into_iter().next().expect("missing conn");
                             return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                 peer_id: peer,
                                 handler: NotifyHandler::One(conn_id),
@@ -671,11 +737,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_2_block() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
         get_block::<2>().await;
     }
 
@@ -701,6 +762,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_128_block() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         get_block::<128>().await;
     }
 
@@ -830,13 +896,8 @@ mod tests {
             info!("peer2: fetching block - session");
             let mut blocks = blocks.clone();
             let ids: Vec<_> = blocks.iter().map(|b| *b.cid()).collect();
-            let session_id = swarm2_bs.client().new_session().await;
-            let (blocks_receiver, _guard) = swarm2_bs
-                .client()
-                .get_blocks_with_session_id(session_id, &ids)
-                .await
-                .unwrap()
-                .into_parts();
+            let session = swarm2_bs.client().new_session().await;
+            let (blocks_receiver, _guard) = session.get_blocks(&ids).await.unwrap().into_parts();
             let mut results: Vec<_> = blocks_receiver.collect().await;
 
             results.sort();
@@ -844,30 +905,6 @@ mod tests {
             for (block, received_block) in blocks.into_iter().zip(results.into_iter()) {
                 assert_eq!(block, received_block);
             }
-
-            swarm2_bs.client().stop_session(session_id).await.unwrap();
-        }
-
-        {
-            info!("peer2: session shutdown");
-            // new blocks, not available
-            let blocks = (0..N).map(|_| create_random_block_v1()).collect::<Vec<_>>();
-            let ids: Vec<_> = blocks.iter().map(|b| *b.cid()).collect();
-            let session_id = swarm2_bs.client().new_session().await;
-            {
-                let (_blocks_receiver, _guard) = swarm2_bs
-                    .client()
-                    .get_blocks_with_session_id(session_id, &ids)
-                    .await
-                    .unwrap()
-                    .into_parts();
-            }
-            // shutdown
-            swarm2_bs.client().stop_session(session_id).await.unwrap();
-
-            // ensure this finishes
-            // let results: Vec<_> = blocks_receiver.collect().await;
-            // assert!(results.is_empty());
         }
 
         info!("--shutting down peer1");

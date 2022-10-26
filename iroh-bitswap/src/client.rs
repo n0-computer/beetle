@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
-use self::session::BlockReceiver;
+pub use self::session::BlockReceiver;
 use self::{peer_manager::PeerManager, session_manager::SessionManager};
 
 mod block_presence_manager;
@@ -152,7 +152,7 @@ impl<S: Store> Client<S> {
     /// Announces the existence of blocks to this bitswap service.
     /// Bitswap itself doesn't store new blocks. It's the caller responsibility to ensure
     /// that those blocks are available in the blockstore before calling this function.
-    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+    pub async fn notify_new_blocks(&mut self, blocks: &[Block]) -> Result<()> {
         let block_cids: Vec<Cid> = blocks.iter().map(|b| *b.cid()).collect();
         // Send all block keys (including duplicates) to any session that wants them.
         self.session_manager
@@ -173,7 +173,7 @@ impl<S: Store> Client<S> {
 
     /// Process blocks received from the network.
     async fn receive_blocks_from(
-        &self,
+        &mut self,
         from: &PeerId,
         incoming: &BitswapMessage,
         haves: &[Cid],
@@ -221,7 +221,7 @@ impl<S: Store> Client<S> {
     }
 
     /// Called by the network interface when a new message is received.
-    pub async fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
+    pub async fn receive_message(&mut self, peer: &PeerId, incoming: &BitswapMessage) {
         inc!(BitswapMetrics::MessagesProcessingClient);
 
         if incoming.blocks_len() > 0 {
@@ -254,27 +254,27 @@ impl<S: Store> Client<S> {
     }
 
     /// Called by the network interface when a peer initiates a new connection to bitswap.
-    pub async fn peer_connected(&self, peer: &PeerId) {
+    pub async fn peer_connected(&mut self, peer: &PeerId) {
         self.peer_manager().connected(peer).await;
     }
 
     /// Called by the network interface when a peer closes a connection.
-    pub async fn peer_disconnected(&self, peer: &PeerId) {
+    pub async fn peer_disconnected(&mut self, peer: &PeerId) {
         self.peer_manager().disconnected(peer).await;
     }
 
     /// Returns the current local wantlist (both want-blocks and want-haves).
-    pub async fn get_wantlist(&self) -> AHashSet<Cid> {
+    pub async fn get_wantlist(&mut self) -> AHashSet<Cid> {
         self.peer_manager().current_wants().await
     }
 
     /// Returns the current list of want-blocks.
-    pub async fn get_want_blocks(&self) -> AHashSet<Cid> {
+    pub async fn get_want_blocks(&mut self) -> AHashSet<Cid> {
         self.peer_manager().current_want_blocks().await
     }
 
     /// Returns the current list of want-haves.
-    pub async fn get_want_haves(&self) -> AHashSet<Cid> {
+    pub async fn get_want_haves(&mut self) -> AHashSet<Cid> {
         self.peer_manager().current_want_haves().await
     }
 
