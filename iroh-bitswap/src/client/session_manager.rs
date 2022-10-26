@@ -7,7 +7,7 @@ use std::{
 };
 
 use ahash::AHashMap;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use futures::FutureExt;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
@@ -18,7 +18,9 @@ use tracing::debug;
 use crate::{network::Network, Block};
 
 use super::{
-    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager, session::Session,
+    block_presence_manager::BlockPresenceManager,
+    peer_manager::PeerManager,
+    session::{BlockReceiver, Session},
     session_interest_manager::SessionInterestManager,
 };
 
@@ -115,7 +117,7 @@ impl SessionManager {
         &self,
         provider_search_delay: Duration,
         rebroadcast_delay: Duration,
-    ) -> Session {
+    ) -> u64 {
         let id = self.get_next_session_id().await;
         self.new_session_with_id(id, provider_search_delay, rebroadcast_delay)
             .await
@@ -126,7 +128,7 @@ impl SessionManager {
         session_id: u64,
         provider_search_delay: Duration,
         rebroadcast_delay: Duration,
-    ) -> Session {
+    ) -> u64 {
         inc!(BitswapMetrics::SessionsCreated);
 
         let session = Session::new(
@@ -143,8 +145,8 @@ impl SessionManager {
             .sessions
             .write()
             .await
-            .insert(session_id, session.clone());
-        session
+            .insert(session_id, session);
+        session_id
     }
 
     pub async fn get_or_create_session(
@@ -152,22 +154,28 @@ impl SessionManager {
         session_id: u64,
         provider_search_delay: Duration,
         rebroadcast_delay: Duration,
-    ) -> Session {
-        if let Some(session) = self.get_session(session_id).await {
-            return session;
+    ) -> u64 {
+        if self.inner.sessions.read().await.contains_key(&session_id) {
+            return session_id;
         }
 
         self.new_session_with_id(session_id, provider_search_delay, rebroadcast_delay)
             .await
     }
 
-    pub async fn get_session(&self, session_id: u64) -> Option<Session> {
-        let sessions = self.inner.sessions.read().await;
-        debug!(
-            "getting session {}, have sessions {:?}",
-            session_id, sessions
-        );
-        sessions.get(&session_id).cloned()
+    pub async fn get_block(&self, session_id: u64, key: &Cid) -> Result<Block> {
+        let recv = self.get_blocks(session_id, &[*key]).await?;
+        let block = recv.recv().await?;
+        Ok(block)
+    }
+
+    pub async fn get_blocks(&self, session_id: u64, keys: &[Cid]) -> Result<BlockReceiver> {
+        if let Some(session) = self.inner.sessions.read().await.get(&session_id) {
+            let blocks = session.get_blocks(keys).await?;
+            Ok(blocks)
+        } else {
+            bail!("Session {} not found", session_id);
+        }
     }
 
     pub async fn remove_session(&self, session_id: u64) -> Result<()> {
@@ -176,13 +184,15 @@ impl SessionManager {
             session_id,
             self.inner.sessions.read().await.len()
         );
-        let cancels = self
-            .inner
-            .session_interest_manager
-            .remove_session(session_id)
-            .await;
-        self.cancel_wants(&cancels).await;
-        self.inner.sessions.write().await.remove(&session_id);
+        if let Some(session) = self.inner.sessions.write().await.remove(&session_id) {
+            session.stop().await?;
+            let cancels = self
+                .inner
+                .session_interest_manager
+                .remove_session(session_id)
+                .await;
+            self.cancel_wants(&cancels).await;
+        }
         debug!("stopping session {} done", session_id);
         Ok(())
     }

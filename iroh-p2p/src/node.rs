@@ -343,11 +343,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 tokio::select! {
                     _ = closer_r => {
                         // Explicit sesssion stop.
-                        debug!("session {}: stopped: closed", ctx);
+                        info!("session {}: stopped: closed", ctx);
                     }
                     _ = chan.closed() => {
                         // RPC dropped
-                        debug!("session {}: stopped: request canceled", ctx);
+                        info!("session {}: stopped: request canceled", ctx);
+
                     }
                     block = client.get_block_with_session_id(ctx, &cid) => match block {
                         Ok(block) => {

@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
 use self::session::BlockReceiver;
-use self::{peer_manager::PeerManager, session::Session, session_manager::SessionManager};
+use self::{peer_manager::PeerManager, session_manager::SessionManager};
 
 mod block_presence_manager;
 mod message_queue;
@@ -129,15 +129,15 @@ impl<S: Store> Client<S> {
 
     /// Attempts to retrieve a particular block from peers.
     pub async fn get_block(&self, key: &Cid) -> Result<Block> {
-        let session = self.new_session().await;
-        let block = session.get_block(key).await;
-        session.stop().await?;
+        let session_id = self.new_session().await;
+        let block = self.session_manager.get_block(session_id, key).await;
+        self.session_manager.remove_session(session_id).await?;
         block
     }
 
     pub async fn get_block_with_session_id(&self, session_id: u64, key: &Cid) -> Result<Block> {
-        let session = self.get_or_create_session(session_id).await;
-        session.get_block(key).await
+        let session_id = self.get_or_create_session(session_id).await;
+        self.session_manager.get_block(session_id, key).await
     }
 
     pub async fn get_blocks_with_session_id(
@@ -145,15 +145,8 @@ impl<S: Store> Client<S> {
         session_id: u64,
         keys: &[Cid],
     ) -> Result<BlockReceiver> {
-        let session = self.get_or_create_session(session_id).await;
-        session.get_blocks(keys).await
-    }
-
-    /// Returns a channel where the caller may receive blocks that correspond to the
-    /// provided `keys`.
-    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<BlockReceiver> {
-        let session = self.new_session().await;
-        session.get_blocks(keys).await
+        let session_id = self.get_or_create_session(session_id).await;
+        self.session_manager.get_blocks(session_id, keys).await
     }
 
     /// Announces the existence of blocks to this bitswap service.
@@ -294,13 +287,13 @@ impl<S: Store> Client<S> {
     /// block requests in a row. The session returned will have it's own `get_blocks`
     /// method, but the session will use the fact that the requests are related to
     /// be more efficient in its requests to peers.
-    pub async fn new_session(&self) -> Session {
+    pub async fn new_session(&self) -> u64 {
         self.session_manager
             .new_session(self.provider_search_delay, self.rebroadcast_delay)
             .await
     }
 
-    pub async fn get_or_create_session(&self, session_id: u64) -> Session {
+    pub async fn get_or_create_session(&self, session_id: u64) -> u64 {
         self.session_manager
             .get_or_create_session(
                 session_id,
@@ -311,9 +304,7 @@ impl<S: Store> Client<S> {
     }
 
     pub async fn stop_session(&self, session_id: u64) -> Result<()> {
-        if let Some(session) = self.session_manager.get_session(session_id).await {
-            session.stop().await?;
-        }
+        self.session_manager.remove_session(session_id).await?;
 
         Ok(())
     }

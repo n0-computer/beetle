@@ -52,14 +52,9 @@ enum Op {
 
 /// Holds state for an individual bitswap transfer operation.
 /// Allows bitswap to make smarter decisions about who to send what.
-#[derive(Debug, Clone)]
-pub struct Session {
-    inner: Arc<Inner>,
-}
-
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct Inner {
+pub struct Session {
     id: u64,
     incoming: async_channel::Sender<Op>,
     worker: JoinHandle<Option<()>>,
@@ -69,7 +64,7 @@ struct Inner {
     notify: async_broadcast::Sender<Block>,
 }
 
-impl Drop for Inner {
+impl Drop for Session {
     fn drop(&mut self) {
         inc!(BitswapMetrics::SessionsDestroyed);
         debug!("session {} stopped", self.id);
@@ -159,31 +154,23 @@ impl Session {
             }
         });
 
-        let inner = Arc::new(Inner {
+        Session {
             id,
             incoming: incoming_s,
             notify,
             worker,
             task_controller,
-        });
-
-        Session { inner }
+        }
     }
 
     pub async fn stop(self) -> Result<()> {
-        let count = Arc::strong_count(&self.inner);
-        info!("stopping session {} ({})", self.inner.id, count);
-        ensure!(
-            count == 2,
-            "session {}: too many session refs",
-            self.inner.id
-        );
+        info!("stopping session {}", self.id);
 
         Ok(())
     }
 
     pub fn id(&self) -> u64 {
-        self.inner.id
+        self.id
     }
 
     /// Receives incoming blocks from the given peer.
@@ -196,7 +183,7 @@ impl Session {
     ) {
         debug!(
             "session:{}: received updates from: {:?} keys: {:?}\n  haves: {:?}\n  dont_haves: {:?}",
-            self.inner.id,
+            self.id,
             from.map(|s| s.to_string()),
             keys.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
             haves.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
@@ -206,7 +193,6 @@ impl Session {
         // Inform the session want sender that a message has been received
         if let Some(from) = from {
             if let Err(err) = self
-                .inner
                 .incoming
                 .send(Op::UpdateWantSender {
                     from,
@@ -225,7 +211,7 @@ impl Session {
         }
 
         // Inform the session that blocks have been received.
-        if let Err(err) = self.inner.incoming.send(Op::Receive(keys)).await {
+        if let Err(err) = self.incoming.send(Op::Receive(keys)).await {
             warn!("failed to send receive: {:?}", err);
         }
     }
@@ -246,9 +232,10 @@ impl Session {
 
         let (s, r) = async_channel::bounded(8);
         let mut remaining: AHashSet<Cid> = keys.iter().copied().collect();
-        let mut block_channel = self.inner.notify.new_receiver();
-        let incoming = self.inner.incoming.clone();
+        let mut block_channel = self.notify.new_receiver();
+        let incoming = self.incoming.clone();
         let (closer_s, mut closer_r) = oneshot::channel();
+
         let worker = tokio::task::spawn(async move {
             loop {
                 inc!(BitswapMetrics::SessionGetBlockLoopTick);
@@ -303,7 +290,7 @@ impl Session {
             }
         });
 
-        self.inner.incoming.send(Op::Want(keys.to_vec())).await?;
+        self.incoming.send(Op::Want(keys.to_vec())).await?;
 
         Ok(BlockReceiver {
             receiver: r,
@@ -425,9 +412,6 @@ impl LoopState {
         }
 
         self.session_want_sender.stop().await?;
-
-        // Remove from the session manager list, to ensure this is the last ref.
-        self.session_manager.remove_session(self.id).await?;
 
         Ok(())
     }

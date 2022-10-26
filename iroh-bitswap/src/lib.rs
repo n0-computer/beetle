@@ -671,6 +671,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_2_block() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         get_block::<2>().await;
     }
 
@@ -696,11 +701,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_128_block() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
         get_block::<128>().await;
     }
 
@@ -830,8 +830,13 @@ mod tests {
             info!("peer2: fetching block - session");
             let mut blocks = blocks.clone();
             let ids: Vec<_> = blocks.iter().map(|b| *b.cid()).collect();
-            let session = swarm2_bs.client().new_session().await;
-            let (blocks_receiver, _guard) = session.get_blocks(&ids).await.unwrap().into_parts();
+            let session_id = swarm2_bs.client().new_session().await;
+            let (blocks_receiver, _guard) = swarm2_bs
+                .client()
+                .get_blocks_with_session_id(session_id, &ids)
+                .await
+                .unwrap()
+                .into_parts();
             let mut results: Vec<_> = blocks_receiver.collect().await;
 
             results.sort();
@@ -839,6 +844,30 @@ mod tests {
             for (block, received_block) in blocks.into_iter().zip(results.into_iter()) {
                 assert_eq!(block, received_block);
             }
+
+            swarm2_bs.client().stop_session(session_id).await.unwrap();
+        }
+
+        {
+            info!("peer2: session shutdown");
+            // new blocks, not available
+            let blocks = (0..N).map(|_| create_random_block_v1()).collect::<Vec<_>>();
+            let ids: Vec<_> = blocks.iter().map(|b| *b.cid()).collect();
+            let session_id = swarm2_bs.client().new_session().await;
+            {
+                let (_blocks_receiver, _guard) = swarm2_bs
+                    .client()
+                    .get_blocks_with_session_id(session_id, &ids)
+                    .await
+                    .unwrap()
+                    .into_parts();
+            }
+            // shutdown
+            swarm2_bs.client().stop_session(session_id).await.unwrap();
+
+            // ensure this finishes
+            // let results: Vec<_> = blocks_receiver.collect().await;
+            // assert!(results.is_empty());
         }
 
         info!("--shutting down peer1");

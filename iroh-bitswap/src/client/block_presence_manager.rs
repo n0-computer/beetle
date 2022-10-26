@@ -82,7 +82,7 @@ impl BlockPresenceManager {
         }
     }
 
-    /// Indicates whether we are trackin this key.
+    /// Indicates whether we are tracking this key.
     pub async fn has_key(&self, cid: &Cid) -> bool {
         let presence = &*self.presence.read().await;
         presence.contains_key(cid)
