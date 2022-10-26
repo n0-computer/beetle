@@ -316,6 +316,10 @@ impl UnixfsNode {
         matches!(self, Self::Directory(_) | Self::HamtShard(_, _))
     }
 
+    pub const fn is_hamt_shard(&self) -> bool {
+        matches!(self, Self::HamtShard(_, _))
+    }
+
     pub async fn get_link_by_name<S: AsRef<str>>(
         &self,
         link_name: S,

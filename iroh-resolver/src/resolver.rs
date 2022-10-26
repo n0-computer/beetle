@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
-use futures::{Future, Stream, TryStreamExt};
+use futures::{Future, Stream};
 use iroh_metrics::inc;
 use iroh_rpc_client::Client;
 use libipld::codec::Encode;
@@ -33,7 +33,7 @@ use iroh_metrics::{
 
 use crate::codecs::Codec;
 use crate::unixfs::{
-    poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
+    poll_read_buf_at_pos, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
 };
 
 pub const IROH_STORE: &str = "iroh-store";
@@ -132,6 +132,14 @@ impl Path {
 
     pub fn push(&mut self, str: impl AsRef<str>) {
         self.tail.push(str.as_ref().to_owned());
+    }
+
+    pub fn push_link(&mut self, link: &Link) {
+        if let Some(ref name) = link.name {
+            self.tail.push(name.to_string());
+        } else {
+            self.tail.push(link.cid.to_string());
+        }
     }
 
     // Empty path segments in the *middle* shouldn't occur,
@@ -261,20 +269,30 @@ impl FromStr for Path {
 #[async_trait]
 pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Extract links out of a container struct.
-    fn links(&self) -> Result<Vec<Cid>>;
+    fn links(&self) -> Result<Vec<Link>>;
 }
 
 #[async_trait]
 impl LinksContainer for OutRaw {
-    fn links(&self) -> Result<Vec<Cid>> {
-        parse_links(&self.cid, &self.content)
+    fn links(&self) -> Result<Vec<Link>> {
+        Ok(parse_links(&self.cid, &self.content)?
+            .into_iter()
+            .map(|cid| Link { cid, name: None })
+            .collect())
     }
 }
 
 #[async_trait]
 impl LinksContainer for Out {
-    fn links(&self) -> Result<Vec<Cid>> {
+    fn links(&self) -> Result<Vec<Link>> {
         Out::links(self)
+    }
+}
+
+#[async_trait]
+impl LinksContainer for (Path, Out) {
+    fn links(&self) -> Result<Vec<Link>> {
+        Out::links(&self.1)
     }
 }
 
@@ -332,6 +350,13 @@ impl Out {
         }
     }
 
+    pub fn is_hamt_shard(&self) -> bool {
+        match &self.content {
+            OutContent::Unixfs(node) => node.is_hamt_shard(),
+            _ => false,
+        }
+    }
+
     pub fn is_symlink(&self) -> bool {
         self.metadata.unixfs_type == Some(UnixfsType::Symlink)
     }
@@ -341,19 +366,24 @@ impl Out {
         self.content.typ()
     }
 
-    pub fn links(&self) -> Result<Vec<Cid>> {
+    pub fn links(&self) -> Result<Vec<Link>> {
         self.content.links()
     }
 
     /// Returns links with an associated file or directory name if the content
     /// is unixfs
-    pub fn named_links(&self) -> Result<Vec<(Option<&str>, Cid)>> {
+    pub fn named_links(&self) -> Result<Vec<Link>> {
         match &self.content {
-            OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
-            _ => {
-                let links = self.content.links();
-                links.map(|l| l.into_iter().map(|l| (None, l)).collect())
-            }
+            OutContent::Unixfs(node) => node
+                .links()
+                .map(|l| {
+                    l.map(|l| Link {
+                        cid: l.cid,
+                        name: l.name.map(|s| s.to_string()),
+                    })
+                })
+                .collect(),
+            _ => self.content.links(),
         }
     }
 
@@ -434,7 +464,7 @@ impl OutContent {
         }
     }
 
-    pub(crate) fn links(&self) -> Result<Vec<Cid>> {
+    pub(crate) fn links(&self) -> Result<Vec<Link>> {
         match self {
             OutContent::DagPb(ipld, _)
             | OutContent::DagCbor(ipld, _)
@@ -442,10 +472,36 @@ impl OutContent {
             | OutContent::Raw(ipld, _) => {
                 let mut links = Vec::new();
                 ipld.references(&mut links);
-                Ok(links)
+                Ok(links
+                    .into_iter()
+                    .map(|cid| Link { cid, name: None })
+                    .collect())
             }
-            OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
+            OutContent::Unixfs(node) => node
+                .links()
+                .map(|r| {
+                    r.map(|r| Link {
+                        cid: r.cid,
+                        name: r.name.map(|s| s.to_string()),
+                    })
+                })
+                .collect(),
         }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Link {
+    pub cid: Cid,
+    pub name: Option<String>,
+}
+
+impl Debug for Link {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Link")
+            .field("cid", &self.cid.to_string())
+            .field("name", &self.name)
+            .finish()
     }
 }
 
@@ -877,66 +933,28 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
+    pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
+        let this = self.clone();
+        self.resolve_recursive_mapped(root, None, move |cid, _, ctx| {
+            let this = this.clone();
+            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid)).await }
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
     pub fn resolve_recursive_with_paths(
         &self,
         root: Path,
     ) -> impl Stream<Item = Result<(Path, Out)>> {
-        let mut blocks = VecDeque::new();
         let this = self.clone();
-        async_stream::try_stream! {
-            let output_path = root.clone();
-            blocks.push_back((output_path, this.resolve(root).await));
-            loop {
-                if let Some((current_output_path, current_out)) = blocks.pop_front() {
-                    let current = current_out?;
-                    if !current.is_dir() {
-                        yield (current_output_path, current);
-                        continue
-                    }
-
-                    // TODO(ramfox): we may want to just keep the stream and iterate over the links
-                    // that way, rather than gathering and then chunking again
-                    let links: Result<Vec<Link>> = current
-                        .unixfs_read_dir(&this, OutMetrics::default())?
-                        .expect("already know this is a directory")
-                        .try_collect()
-                        .await;
-                    let links = links?;
-                    // TODO: configurable limit
-                    for link_chunk in links.chunks(8) {
-                        let next = futures::future::join_all(
-                            link_chunk.iter().map(|link| {
-                                let this = this.clone();
-                                let mut this_path = current_output_path.clone();
-                                let name = link.name.clone();
-                                match name {
-                                    None => this_path.push(link.cid.to_string()),
-                                    Some(p) =>  this_path.push(p),
-                                };
-                                async move {
-                                    (this_path, this.resolve(Path::from_cid(link.cid)).await)
-                                }
-                            })
-                        ).await;
-                        for res in next.into_iter() {
-                            blocks.push_back(res);
-                        }
-                    }
-                    yield (current_output_path, current);
-                } else {
-                    // no links left to resolve
-                    break;
-                }
-            }
-        }
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
-        let this = self.clone();
-        self.resolve_recursive_mapped(root, None, move |cid, ctx| {
+        self.resolve_recursive_mapped(root, None, move |cid, current_path, ctx| {
             let this = this.clone();
-            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid)).await }
+            let current_path = current_path.clone();
+            dbg!(current_path.to_string());
+            async move {
+                let out = this.resolve_with_ctx(ctx, Path::from_cid(cid)).await?;
+                Ok((current_path, out))
+            }
         })
     }
 
@@ -948,7 +966,7 @@ impl<T: ContentLoader> Resolver<T> {
         recursion_limit: Option<usize>,
     ) -> impl Stream<Item = Result<OutRaw>> {
         let this = self.clone();
-        self.resolve_recursive_mapped(root, recursion_limit, move |cid, mut ctx| {
+        self.resolve_recursive_mapped(root, recursion_limit, move |cid, _, mut ctx| {
             let this = this.clone();
             async move {
                 this.load_cid(&cid, &mut ctx)
@@ -968,7 +986,7 @@ impl<T: ContentLoader> Resolver<T> {
     ) -> impl Stream<Item = Result<O>>
     where
         O: LinksContainer,
-        M: Fn(Cid, LoaderContext) -> F + Clone,
+        M: Fn(Cid, &Path, LoaderContext) -> F + Clone,
         F: Future<Output = Result<O>> + Send + 'static,
     {
         let mut ctx =
@@ -978,12 +996,13 @@ impl<T: ContentLoader> Resolver<T> {
         let this = self.clone();
         let mut counter = 0;
         let chunk_size = 8;
+
         async_stream::try_stream! {
             let root_cid = this.resolve_path_to_cid(&root, &mut ctx).await?;
-            let root_block = resolve(root_cid, ctx.clone()).await?;
-            cids.push_back(root_block);
+            let root_block = resolve(root_cid, &root, ctx.clone()).await?;
+            cids.push_back((root_block, root.clone()));
             loop {
-                if let Some(current) = cids.pop_front() {
+                if let Some((current, current_root)) = cids.pop_front() {
                     let links = current.links()?;
                     counter += links.len();
                     if let Some(limit) = recursion_limit {
@@ -996,16 +1015,18 @@ impl<T: ContentLoader> Resolver<T> {
                     for link_chunk in links.chunks(chunk_size) {
                         let next = futures::future::join_all(
                             link_chunk.iter().map(|link| {
+                                let mut current_root = current_root.clone();
+                                current_root.push_link(link);
                                 let resolve = resolve.clone();
                                 let ctx = ctx.clone();
                                 async move {
-                                    resolve(*link, ctx).await
+                                    (resolve(link.cid, &current_root, ctx).await, current_root)
                                 }
                             })
                         ).await;
-                        for res in next.into_iter() {
+                        for (res, current_root) in next.into_iter() {
                             let res = res?;
-                            cids.push_back(res);
+                            cids.push_back((res, current_root));
                         }
                     }
                     yield current;
@@ -2643,7 +2664,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unixfs_hamt_dir() {
+    async fn test_unixfs_hamt_dir_resolve() {
         // Test content
         // ------------
         // for n in $(seq 10000); do echo $n > foo/$n.txt; done
@@ -2846,5 +2867,72 @@ mod tests {
             results[3].0.to_string(),
             format!("/ipfs/{root_cid_str}/bar/bar.txt")
         );
+    }
+
+    #[tokio::test]
+    async fn test_unixfs_hamt_dir_recursive() {
+        // Test content
+        // ------------
+        // for n in $(seq 10000); do echo $n > foo/$n.txt; done
+        // ipfs add --recursive foo
+        //
+        // QmUu8pzQ5yjhDrg4GiHYLeko2oT76vcmYX5bw6sjiEJ82k foo
+        // QmWKbcq9HGfat7FsL85qrwNUxnmo3xAWzUo2nEj9BoAZeP foo/9999.txt
+
+        let root_cid_str = "QmUu8pzQ5yjhDrg4GiHYLeko2oT76vcmYX5bw6sjiEJ82k";
+
+        let reader = tokio::io::BufReader::new(
+            tokio::fs::File::open("./fixtures/big-foo.car")
+                .await
+                .unwrap(),
+        );
+        let car_reader = iroh_car::CarReader::new(reader).await.unwrap();
+        let files: HashMap<Cid, Bytes> = car_reader
+            .stream()
+            .map(|r| r.map(|(k, v)| (k, Bytes::from(v))))
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(files.len(), 10938);
+
+        let loader = Arc::new(files);
+        let resolver = Resolver::new(loader.clone());
+
+        // read the directory listing
+        {
+            let path = format!("/ipfs/{root_cid_str}");
+            let links: Vec<_> = resolver
+                .resolve_recursive_with_paths(path.parse().unwrap())
+                .try_collect()
+                .await
+                .unwrap();
+
+            assert_eq!(links.len(), 10938);
+
+            let txt_files: Vec<_> = links
+                .iter()
+                .filter(|(path, _)| path.to_string().contains(".txt"))
+                .cloned()
+                .collect();
+
+            for (i, (path, _out)) in txt_files.iter().enumerate() {
+                assert_eq!(
+                    path.to_string(),
+                    format!("/ipfs/{root_cid_str}/{}.txt", i + 1)
+                );
+            }
+            assert_eq!(txt_files.len(), 10002);
+
+            assert_eq!(
+                links[10000].0.to_string(),
+                format!("/ipfs/{root_cid_str}/bar")
+            );
+            assert_eq!(
+                links[10001].0.to_string(),
+                format!("/ipfs/{root_cid_str}/hello.txt")
+            );
+
+            assert_eq!(links.len(), 10_000 + 2);
+        }
     }
 }
