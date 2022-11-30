@@ -68,6 +68,11 @@ impl Bitfield {
         self.0.iter().map(|a| a.count_ones() as usize).sum()
     }
 
+    /// Number of elements in the underlying array.
+    const fn len(&self) -> usize {
+        BITWIDTH / 64
+    }
+
     pub fn and(self, other: &Self) -> Self {
         Bitfield([
             self.0[0] & other.0[0],

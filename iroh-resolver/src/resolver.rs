@@ -973,7 +973,7 @@ impl<T: ContentLoader> Resolver<T> {
             }
             UnixfsNode::HamtShard(_, hamt) => {
                 let (next_link, next_node) = hamt
-                    .get(ctx.clone(), self, part.as_bytes())
+                    .get(ctx.clone(), self, part)
                     .await?
                     .ok_or_else(|| anyhow!("UnixfsNode::HamtShard link '{}' not found", part))?;
                 // TODO: is this the right way to to resolved path here?

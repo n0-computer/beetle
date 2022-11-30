@@ -49,6 +49,11 @@ enum InnerNode {
 }
 
 impl Hamt {
+    pub fn new() -> Self {
+        let root = Node::new(DEFAULT_FANOUT);
+        Self { root }
+    }
+
     pub fn from_node(node: &unixfs::Node) -> Result<Self> {
         let root = Node::from_node(node)?;
         Ok(Self { root })
@@ -58,7 +63,7 @@ impl Hamt {
         &self,
         ctx: LoaderContext,
         loader: &Resolver<C>,
-        key: &[u8],
+        key: &str,
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
         self.root.get(ctx, loader, key).await
     }
@@ -118,6 +123,7 @@ impl InnerNode {
             _ => bail!("unexpected node: {:?}", out.content.typ()),
         }
     }
+
     fn children<'a, 'b: 'a, C: ContentLoader>(
         &'a self,
         ctx: LoaderContext,
@@ -154,7 +160,87 @@ impl InnerNode {
     }
 }
 
+fn get_padding_len(fanout: u32) -> usize {
+    // TODO: avoid allocation
+    let padding = format!("{:X}", fanout - 1);
+    padding.len()
+}
+
+fn prefix_link_name(name: &str, idx: u32) -> String {
+    format!("{:X}{}", idx, name)
+}
+
 impl Node {
+    pub fn new(fanout: u32) -> Self {
+        let bit_width = log2(fanout);
+        let padding_len = get_padding_len(fanout);
+
+        Node {
+            bitfield: Bitfield::default(),
+            bit_width,
+            padding_len,
+            pointers: Vec::new(),
+        }
+    }
+
+    /// Inserts or replaces the existing node at the given position.
+    /// Returns the existing node if there was one.
+    pub fn insert(&mut self, key: &str, node: UnixfsNode) -> Result<Option<UnixfsNode>> {
+        let hashed_key = hash_key(key);
+        let mut hash_bits = HashBits::new(&hashed_key);
+
+        let link = node.create_link()?;
+        self.insert_value(&mut hash_bits, key, link)
+    }
+
+    pub fn insert_link(&mut self, key: &str, link: Link) -> Result<Option<UnixfsNode>> {
+        let hashed_key = hash_key(key);
+        let mut hash_bits = HashBits::new(&hashed_key);
+
+        self.insert_value(&mut hash_bits, key, link)
+    }
+
+    fn insert_value(
+        &mut self,
+        hash_bits: &mut HashBits<'_, HASH_BIT_LENGTH>,
+        key: &str,
+        mut link: Link,
+    ) -> Result<Option<UnixfsNode>> {
+        let idx = hash_bits.next(self.bit_width)?;
+
+        if !self.has(idx) {
+            // just insert new one, done
+            link.name = Some(prefix_link_name(key, idx));
+            let i = self.index_for_bit_pos(idx);
+            self.bitfield.set_bit(idx);
+            self.pointers.insert(
+                i,
+                NodeLink {
+                    link,
+                    cache: OnceCell::from(Box::new(InnerNode::Node {
+                        node: (),
+                        value: (),
+                    })),
+                },
+            );
+
+            return Ok(None);
+        }
+
+        todo!()
+    }
+
+    /// Checks if the given index is present
+    fn has(&self, idx: u32) -> bool {
+        self.bitfield.test_bit(idx)
+    }
+
+    fn index_for_bit_pos(&self, idx: u32) -> usize {
+        let mask = Bitfield::zero().set_bits_le(idx);
+        assert_eq!(mask.count_ones(), idx as usize);
+        mask.and(&self.bitfield).count_ones()
+    }
+
     pub fn from_node(node: &unixfs::Node) -> Result<Self> {
         ensure!(
             node.hash_type() == Some(HamtHashFunction::Murmur3),
@@ -178,8 +264,7 @@ impl Node {
             .collect::<Result<_>>()?;
 
         let bit_width = log2(fanout);
-        let padding = format!("{:X}", fanout - 1);
-        let padding_len = padding.len();
+        let padding_len = get_padding_len(fanout);
 
         Ok(Node {
             bitfield,
@@ -193,12 +278,11 @@ impl Node {
         &self,
         ctx: LoaderContext,
         loader: &Resolver<C>,
-        key: &[u8],
+        key: &str,
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
         let hashed_key = hash_key(key);
-        let res = self
-            .get_value(ctx, loader, &mut HashBits::new(&hashed_key), key, 0)
-            .await?;
+        let mut hash_bits = HashBits::new(&hashed_key);
+        let res = self.get_value(ctx, loader, &mut hash_bits, key, 0).await?;
 
         Ok(res)
     }
@@ -209,12 +293,12 @@ impl Node {
         ctx: LoaderContext,
         loader: &Resolver<C>,
         hashed_key: &mut HashBits<'_, HASH_BIT_LENGTH>,
-        key: &[u8],
+        key: &str,
         depth: usize,
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
         ensure!(depth < MAX_DEPTH, "max depth reached");
         let idx = hashed_key.next(self.bit_width)?;
-        if !self.bitfield.test_bit(idx) {
+        if !self.has(idx) {
             return Ok(None);
         }
 
@@ -227,7 +311,7 @@ impl Node {
                     .link
                     .name
                     .as_ref()
-                    .map(|s| &s.as_bytes()[self.padding_len..])
+                    .map(|s| &s[self.padding_len..])
                     .unwrap_or_default();
 
                 if key == name {
@@ -241,7 +325,7 @@ impl Node {
                 let name = link
                     .name
                     .as_ref()
-                    .map(|s| &s.as_bytes()[self.padding_len..])
+                    .map(|s| &s[self.padding_len..])
                     .unwrap_or_default();
                 if key == name {
                     Ok(Some((link, value)))
@@ -312,8 +396,8 @@ impl Node {
 
 /// Hashes with murmur3 x64 and returns the first 64 bits.
 /// This matches what go-unixfs uses.
-fn hash_key(key: &[u8]) -> [u8; HASH_BIT_LENGTH] {
-    let full = fastmurmur3::hash(key);
+fn hash_key(key: &str) -> [u8; HASH_BIT_LENGTH] {
+    let full = fastmurmur3::hash(key.as_bytes());
     // [h1, h2]
     let bytes = full.to_ne_bytes();
     // get h1
@@ -333,9 +417,6 @@ mod tests {
 
     #[test]
     fn test_hash_key() {
-        assert_eq!(
-            hash_key("1.txt".as_bytes()),
-            [7, 193, 130, 130, 92, 180, 71, 225]
-        );
+        assert_eq!(hash_key("1.txt"), [7, 193, 130, 130, 92, 180, 71, 225]);
     }
 }

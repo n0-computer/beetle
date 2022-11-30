@@ -248,6 +248,17 @@ impl UnixfsNode {
         Ok(res)
     }
 
+    /// Construct the link to this unixfs node.
+    pub fn create_link(&self) -> Result<Link> {
+        let encoded_node = self.encode()?;
+        let link = Link {
+            cid: *encoded_node.cid(),
+            name: None,
+            tsize: Some(encoded_node.data().len() as u64), // TODO: verify
+        };
+        Ok(link)
+    }
+
     pub const fn typ(&self) -> Option<DataType> {
         match self {
             UnixfsNode::Raw(_) => None,
