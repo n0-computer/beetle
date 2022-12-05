@@ -44,3 +44,8 @@ incremental = false
 
 [workspace.metadata.release]
 consolidate-commits = true
+
+[patch.crates-io]
+libipld = { path = "../libipld" }
+cid = { path = "../multiformats/rust-cid" }
+multihash = { path = "../multiformats/rust-multihash" }

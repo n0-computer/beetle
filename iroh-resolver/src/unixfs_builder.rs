@@ -14,6 +14,7 @@ use cid::Cid;
 use futures::stream::TryStreamExt;
 use futures::{future, stream::LocalBoxStream, Stream, StreamExt};
 use iroh_rpc_client::Client;
+use libipld::pb::{PbLink, PbNode};
 use prost::Message;
 use tokio::io::AsyncRead;
 
@@ -21,7 +22,7 @@ use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
     chunker::{self, Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
     resolver::Block,
-    unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
+    unixfs::{unixfs_pb, DataType, Node, UnixfsNode},
 };
 
 // The maximum number of links we allow in a directory
@@ -113,10 +114,10 @@ impl Directory {
                     }
                 };
                 let root_block = root.expect("file must not be empty");
-                links.push(dag_pb::PbLink {
-                    hash: Some(root_block.cid().to_bytes()),
+                links.push(PbLink {
+                    cid: *root_block.cid(),
                     name: Some(name),
-                    tsize: Some(root_block.data().len() as u64),
+                    size: Some(root_block.data().len() as u64),
                 });
 
             }
@@ -501,8 +502,8 @@ impl SymlinkBuilder {
 
 pub(crate) fn encode_unixfs_pb(
     inner: &unixfs_pb::Data,
-    links: Vec<dag_pb::PbLink>,
-) -> Result<dag_pb::PbNode> {
+    links: Vec<PbLink>,
+) -> Result<PbNode<'static>> {
     let data = inner.encode_to_vec();
     ensure!(
         data.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
@@ -510,7 +511,7 @@ pub(crate) fn encode_unixfs_pb(
         data.len()
     );
 
-    Ok(dag_pb::PbNode {
+    Ok(PbNode {
         links,
         data: Some(data.into()),
     })

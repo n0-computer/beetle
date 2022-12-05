@@ -5,9 +5,10 @@ use async_stream::try_stream;
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
+use libipld::pb::PbLink;
 
 use crate::resolver::Block;
-use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
+use crate::unixfs::{unixfs_pb, DataType, Node, UnixfsNode};
 use crate::unixfs_builder::encode_unixfs_pb;
 
 /// Default degree number for balanced tree, taken from unixfs specs
@@ -155,8 +156,8 @@ fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNo
     let filesize: u64 = blocksizes.iter().sum();
     let links = links
         .into_iter()
-        .map(|(cid, l)| dag_pb::PbLink {
-            hash: Some(cid.to_bytes()),
+        .map(|(cid, l)| PbLink {
+            cid,
             /// ALL "stem" nodes have `name: None`.
             /// In kubo, nodes that have links to `leaf` nodes have `name: Some("".to_string())`
             name: None,
@@ -167,7 +168,7 @@ fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNo
             /// In the `go-merkledag` package, the `merkledag.proto` file, states that tsize
             /// is the "cumulative size of the target object"
             /// (https://github.com/ipfs/go-merkledag/blob/8335efd4765ed5a512baa7e522c3552d067cf966/pb/merkledag.proto#L29)
-            tsize: Some(l.encoded_len as u64),
+            size: Some(l.encoded_len as u64),
         })
         .collect();
 

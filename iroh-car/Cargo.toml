@@ -13,7 +13,6 @@ cid = "0.9"
 futures = "0.3.21"
 integer-encoding = { version = "3.0", features = ["tokio_async"] }
 ipld = { package = "libipld", version = "0.15"}
-ipld-cbor = { package = "libipld-cbor", version = "0.15" }
 thiserror = "1.0"
 tokio = { version = "1", features = ["io-util"] }
 

@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     fmt::Debug,
-    io::Cursor,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -10,6 +9,7 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
+use libipld::pb::PbNode;
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncSeek};
 
@@ -24,11 +24,6 @@ use crate::{
 pub(crate) mod unixfs_pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
-}
-
-pub(crate) mod dag_pb {
-    #![allow(clippy::all)]
-    include!(concat!(env!("OUT_DIR"), "/merkledag_pb.rs"));
 }
 
 #[derive(
@@ -120,13 +115,13 @@ pub enum HamtHashFunction {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Node {
-    pub(super) outer: dag_pb::PbNode,
+    pub(super) outer: PbNode<'static>,
     pub(super) inner: unixfs_pb::Data,
 }
 
 impl Node {
-    fn encode(&self) -> Result<Bytes> {
-        let bytes = self.outer.encode_to_vec();
+    fn encode(self) -> Result<Bytes> {
+        let bytes = self.outer.into_bytes();
         Ok(bytes.into())
     }
 
@@ -187,13 +182,13 @@ impl UnixfsNode {
         match cid.codec() {
             c if c == Codec::Raw as u64 => Ok(UnixfsNode::Raw(buf)),
             _ => {
-                let outer = dag_pb::PbNode::decode(buf)?;
+                let outer = PbNode::from_bytes(buf)?;
                 let inner_data = outer
                     .data
                     .as_ref()
                     .cloned()
                     .ok_or_else(|| anyhow!("missing data"))?;
-                let inner = unixfs_pb::Data::decode(inner_data)?;
+                let inner = unixfs_pb::Data::decode(&*inner_data)?;
                 let typ: DataType = inner.r#type.try_into()?;
                 let node = Node { outer, inner };
 
@@ -863,11 +858,11 @@ pub enum Links<'a> {
 #[derive(Debug)]
 pub struct PbLinks<'a> {
     i: usize,
-    outer: &'a dag_pb::PbNode,
+    outer: &'a PbNode<'static>,
 }
 
 impl<'a> PbLinks<'a> {
-    pub fn new(outer: &'a dag_pb::PbNode) -> Self {
+    pub fn new(outer: &'a PbNode<'static>) -> Self {
         PbLinks { i: 0, outer }
     }
 }
@@ -909,19 +904,11 @@ impl<'a> Iterator for PbLinks<'a> {
         let l = &self.outer.links[self.i];
         self.i += 1;
 
-        let res = l
-            .hash
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing link"))
-            .and_then(|c| {
-                Ok(LinkRef {
-                    cid: Cid::read_bytes(Cursor::new(c))?,
-                    name: l.name.as_deref(),
-                    tsize: l.tsize,
-                })
-            });
-
-        Some(res)
+        Some(Ok(LinkRef {
+            cid: l.cid,
+            name: l.name.as_deref(),
+            tsize: l.size,
+        }))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

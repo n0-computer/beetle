@@ -1,6 +1,5 @@
 use cid::Cid;
-use ipld::codec::Codec;
-use ipld_cbor::DagCborCodec;
+use ipld::{cbor::DagCborCodec, codec::Codec};
 
 use crate::error::Error;
 
@@ -80,8 +79,8 @@ impl From<Vec<Cid>> for CarHeaderV1 {
 
 #[cfg(test)]
 mod tests {
+    use ipld::cbor::DagCborCodec;
     use ipld::codec::{Decode, Encode};
-    use ipld_cbor::DagCborCodec;
     use multihash::MultihashDigest;
 
     use super::*;
