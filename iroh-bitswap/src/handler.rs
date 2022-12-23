@@ -21,7 +21,6 @@ use libp2p::swarm::{
     ConnectionHandler, ConnectionHandlerEvent, ConnectionHandlerUpgrErr, KeepAlive,
     NegotiatedSubstream, SubstreamProtocol,
 };
-use smallvec::SmallVec;
 use tokio::sync::oneshot;
 use tracing::{error, trace, warn};
 
@@ -32,8 +31,6 @@ use crate::{
     protocol::{BitswapCodec, ProtocolConfig, ProtocolId},
 };
 
-/// The initial time (in seconds) we set the keep alive for protocol negotiations to occur.
-// TODO: configurable
 const INITIAL_KEEP_ALIVE: u64 = 30;
 
 #[derive(thiserror::Error, Debug)]
@@ -103,9 +100,6 @@ pub struct BitswapHandler {
     /// Inbound substreams.
     inbound_substreams: SelectAll<BoxStream<'static, BitswapConnectionHandlerEvent>>,
 
-    /// Pending events to yield.
-    events: SmallVec<[BitswapConnectionHandlerEvent; 4]>,
-
     /// Queue of values that we want to send to the remote.
     send_queue: VecDeque<(BitswapMessage, BitswapMessageResponse)>,
 
@@ -133,7 +127,6 @@ impl Debug for BitswapHandler {
                 "inbound_substreams",
                 &format!("SelectAll<{} streams>", self.inbound_substreams.len()),
             )
-            .field("events", &self.events)
             .field("send_queue", &self.send_queue)
             .field("protocol", &self.protocol)
             .field("idle_timeout", &self.idle_timeout)
@@ -155,7 +148,6 @@ impl BitswapHandler {
             idle_timeout,
             upgrade_errors: VecDeque::new(),
             keep_alive: KeepAlive::Until(Instant::now() + Duration::from_secs(INITIAL_KEEP_ALIVE)),
-            events: Default::default(),
         }
     }
 }
@@ -238,11 +230,6 @@ impl ConnectionHandler for BitswapHandler {
 
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<BitswapConnectionHandlerEvent> {
         inc!(BitswapMetrics::HandlerPollCount);
-        if !self.events.is_empty() {
-            return Poll::Ready(self.events.remove(0));
-        }
-
-        inc!(BitswapMetrics::HandlerPollEventCount);
 
         // Handle any upgrade errors
         if let Some(error) = self.upgrade_errors.pop_front() {
