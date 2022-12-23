@@ -37,7 +37,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            provider_search_delay: Duration::from_secs(1),
+            provider_search_delay: Duration::from_secs(0),
             rebroadcast_delay: Duration::from_secs(60),
             simluate_donthaves_on_timeout: true,
         }
