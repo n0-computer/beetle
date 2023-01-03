@@ -10,7 +10,6 @@ use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::p2p::P2pAddr;
 use libp2p::core::Multiaddr;
-use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{Event as IdentifyEvent, Info as IdentifyInfo};
 use libp2p::identity::Keypair;
@@ -26,6 +25,7 @@ use libp2p::ping::Result as PingResult;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot::{self, Sender as OneShotSender};
 use tokio::task::JoinHandle;
@@ -38,6 +38,7 @@ use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
 use crate::rpc::{P2p, ProviderRequestKey};
 use crate::swarm::build_swarm;
+use crate::GossipsubEvent;
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
@@ -45,29 +46,12 @@ use crate::{
 };
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NetworkEvent {
     PeerConnected(PeerId),
     PeerDisconnected(PeerId),
     Gossipsub(GossipsubEvent),
     CancelLookupQuery(PeerId),
-}
-
-#[derive(Debug, Clone)]
-pub enum GossipsubEvent {
-    Subscribed {
-        peer_id: PeerId,
-        topic: TopicHash,
-    },
-    Unsubscribed {
-        peer_id: PeerId,
-        topic: TopicHash,
-    },
-    Message {
-        from: PeerId,
-        id: MessageId,
-        message: GossipsubMessage,
-    },
 }
 
 pub struct Node<KeyStorage: Storage> {
@@ -706,10 +690,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     message,
                 } = e
                 {
+                    let topic = message.topic.clone();
                     self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Message {
                         from: propagation_source,
                         id: message_id,
                         message,
+                        topic,
                     }));
                 } else if let libp2p::gossipsub::GossipsubEvent::Subscribed { peer_id, topic } = e {
                     self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
@@ -978,7 +964,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             .map_err(|_| anyhow!("sender dropped"))?;
                     }
                     rpc::GossipsubMessage::Subscribe(response_channel, topic_hash) => {
-                        let res = gossipsub.subscribe(&IdentTopic::new(topic_hash.into_string()));
+                        let t = IdentTopic::new(topic_hash.into_string());
+                        let res = gossipsub
+                            .subscribe(&t)
+                            .map(|_| self.network_events())
+                            .map_err(|e| anyhow::Error::new(e));
                         response_channel
                             .send(res)
                             .map_err(|_| anyhow!("sender dropped"))?;
@@ -1242,7 +1232,6 @@ mod tests {
 
             let client = RpcClient::new(cfg).await?;
 
-            let network_events = p2p.network_events();
             let task = tokio::task::spawn(async move { p2p.run().await.unwrap() });
 
             let client = client.try_p2p()?;
@@ -1257,7 +1246,6 @@ mod tests {
                 task,
                 client,
                 peer_id,
-                network_events,
                 addr,
                 dial_addr,
             })
@@ -1281,8 +1269,6 @@ mod tests {
         client: P2pClient,
         /// The node's peer_id
         peer_id: PeerId,
-        /// A channel to read the network events received by the node.
-        network_events: Receiver<NetworkEvent>,
         /// The listening address for this node.
         addr: Multiaddr,
         /// A multiaddr that is a combination of the listening addr and peer_id.
@@ -1435,10 +1421,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_listen_for_identify() -> Result<()> {
-        let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
         let peer_id: PeerId = "12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE"
             .parse()
             .unwrap();
+        let mut network_events = test_runner_a.client.network_events().await?;
         test_runner_a
             .client
             .lookup(peer_id, None)
@@ -1446,7 +1433,7 @@ mod tests {
             .unwrap_err();
         // when lookup ends in error, we must ensure we
         // have canceled the lookup
-        let event = test_runner_a.network_events.recv().await.unwrap();
+        let event = network_events.next().await.unwrap().unwrap();
         if let NetworkEvent::CancelLookupQuery(got_peer_id) = event {
             assert_eq!(peer_id, got_peer_id);
         } else {
@@ -1458,7 +1445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_gossipsub() -> Result<()> {
-        let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
         let test_runner_b = TestRunnerBuilder::new()
             .no_bootstrap()
@@ -1466,14 +1453,15 @@ mod tests {
             .build()
             .await?;
         let addrs_b = vec![test_runner_b.addr.clone()];
+        let mut network_events_a = test_runner_a.client.network_events().await?;
 
         test_runner_a
             .client
             .connect(test_runner_b.peer_id, addrs_b)
             .await?;
 
-        match test_runner_a.network_events.recv().await {
-            Some(NetworkEvent::PeerConnected(peer_id)) => {
+        match network_events_a.next().await {
+            Some(Ok(NetworkEvent::PeerConnected(peer_id))) => {
                 assert_eq!(test_runner_b.peer_id, peer_id);
             }
             Some(n) => {
@@ -1489,7 +1477,7 @@ mod tests {
         assert_eq!(test_runner_b.peer_id, got_peer.0);
 
         // create topic
-        let topic = TopicHash::from_raw("test_topic");
+        let topic = libp2p::gossipsub::TopicHash::from_raw("test_topic");
         // subscribe both to same topic
         test_runner_a
             .client
@@ -1500,11 +1488,11 @@ mod tests {
             .gossipsub_subscribe(topic.clone())
             .await?;
 
-        match test_runner_a.network_events.recv().await {
-            Some(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
+        match network_events_a.next().await {
+            Some(Ok(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
                 peer_id,
                 topic: subscribed_topic,
-            })) => {
+            }))) => {
                 assert_eq!(test_runner_b.peer_id, peer_id);
                 assert_eq!(topic, subscribed_topic);
             }
@@ -1541,8 +1529,10 @@ mod tests {
             .gossipsub_publish(topic.clone(), msg.clone())
             .await?;
 
-        match test_runner_a.network_events.recv().await {
-            Some(NetworkEvent::Gossipsub(GossipsubEvent::Message { from, message, .. })) => {
+        match network_events_a.next().await {
+            Some(Ok(NetworkEvent::Gossipsub(GossipsubEvent::Message {
+                from, message, ..
+            }))) => {
                 assert_eq!(test_runner_b.peer_id, from);
                 assert_eq!(topic, message.topic);
                 assert_eq!(test_runner_b.peer_id, message.source.unwrap());
@@ -1560,11 +1550,11 @@ mod tests {
             .client
             .gossipsub_unsubscribe(topic.clone())
             .await?;
-        match test_runner_a.network_events.recv().await {
-            Some(NetworkEvent::Gossipsub(GossipsubEvent::Unsubscribed {
+        match network_events_a.next().await {
+            Some(Ok(NetworkEvent::Gossipsub(GossipsubEvent::Unsubscribed {
                 peer_id,
                 topic: unsubscribe_topic,
-            })) => {
+            }))) => {
                 assert_eq!(test_runner_b.peer_id, peer_id);
                 assert_eq!(topic, unsubscribe_topic);
             }
@@ -1591,7 +1581,7 @@ mod tests {
         println!("peer_a: {:?}", test_runner_a.peer_id);
 
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
-        let mut test_runner_b = TestRunnerBuilder::new()
+        let test_runner_b = TestRunnerBuilder::new()
             .no_bootstrap()
             .with_seed(ChaCha8Rng::from_seed([0; 32]))
             .build()
@@ -1608,6 +1598,7 @@ mod tests {
 
         println!("peer_c: {:?}", test_runner_c.peer_id);
 
+        let mut network_events_b = test_runner_b.client.network_events().await?;
         // connect a and c to b
         test_runner_a
             .client
@@ -1615,8 +1606,8 @@ mod tests {
             .await?;
 
         // expect a network event showing a & b have connected
-        match test_runner_b.network_events.recv().await {
-            Some(NetworkEvent::PeerConnected(peer_id)) => {
+        match network_events_b.next().await {
+            Some(Ok(NetworkEvent::PeerConnected(peer_id))) => {
                 assert_eq!(test_runner_a.peer_id, peer_id);
             }
             Some(n) => {
@@ -1633,8 +1624,8 @@ mod tests {
             .await?;
 
         // expect a network event showing b & c have connected
-        match test_runner_b.network_events.recv().await {
-            Some(NetworkEvent::PeerConnected(peer_id)) => {
+        match network_events_b.next().await {
+            Some(Ok(NetworkEvent::PeerConnected(peer_id))) => {
                 assert_eq!(test_runner_c.peer_id, peer_id);
             }
             Some(n) => {

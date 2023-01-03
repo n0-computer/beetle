@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let (store_rpc, p2p_rpc) = {
+    let (store_rpc, (_network_events, p2p_rpc)) = {
         let store_recv = Addr::new_mem();
         let store_sender = store_recv.clone();
         let p2p_recv = Addr::new_mem();

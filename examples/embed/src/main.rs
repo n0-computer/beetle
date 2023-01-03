@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
         "/ip4/0.0.0.0/tcp/0".parse().unwrap(),
         "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(),
     ];
-    let p2p = P2pService::new(p2p_config, dir, store.addr()).await?;
+    let (p2p,_network_events) = P2pService::new(p2p_config, dir, store.addr()).await?;
 
     // Note by default this is configured with an indexer, but not with http resolvers.
     let iroh = IrohBuilder::new().store(store).p2p(p2p).build().await?;

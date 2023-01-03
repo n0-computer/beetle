@@ -1,17 +1,62 @@
-mod p2p_node;
+mod data;
+mod iroh;
 mod receiver;
 mod sender;
 
 use cid::Cid;
+use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
-pub use crate::p2p_node::Ticket;
-pub use crate::receiver::{ProgressEvent, Receiver, Transfer as ReceiverTransfer};
-pub use crate::sender::{Sender, Transfer as SenderTransfer};
+// pub use crate::receiver::{ProgressEvent, Receiver};
+// pub use crate::sender::Sender;
+pub use crate::receiver::ProgressEvent;
+
+// TODO(ramfox): remove re export
+pub use crate::iroh::build as build_iroh;
+
+use anyhow::Result;
+use libp2p::gossipsub::{Sha256Topic, TopicHash};
+use rand::Rng;
+
+/// Ticket describing the peer, their addresses, and the topic
+/// on which to discuss the data transfer
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Ticket {
+    pub peer_id: PeerId,
+    pub addrs: Vec<Multiaddr>,
+    pub topic: String,
+}
+
+impl Ticket {
+    pub fn new(peer_id: PeerId, addrs: Vec<Multiaddr>) -> Self {
+        let id: u64 = rand::thread_rng().gen();
+        let topic = Sha256Topic::new(format!("iroh-share-{id}"))
+            .hash()
+            .to_string();
+        Self {
+            peer_id,
+            addrs,
+            topic,
+        }
+    }
+
+    pub fn topic_hash(&self) -> TopicHash {
+        TopicHash::from_raw(self.topic.clone())
+    }
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).expect("failed to serialize")
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let ticket = bincode::deserialize(bytes)?;
+        Ok(ticket)
+    }
+}
 
 /// Messages sent from the sender.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum SenderMessage {
+pub enum SenderMessage {
     Start {
         /// The root Cid of the content.
         root: Cid,
@@ -22,7 +67,7 @@ enum SenderMessage {
 
 /// Messages sent from the receiver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum ReceiverMessage {
+pub enum ReceiverMessage {
     /// Transfer was completed successfully.
     FinishOk,
     /// Transfer failed.
