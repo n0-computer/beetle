@@ -1,6 +1,10 @@
 use std::{
     collections::VecDeque,
     fmt::Debug,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     task::Context,
     task::Poll,
     time::{Duration, Instant},
@@ -9,14 +13,14 @@ use std::{
 use asynchronous_codec::Framed;
 use bytes::Bytes;
 use cid::Cid;
-use futures::stream::{BoxStream, SelectAll};
-use futures::{SinkExt, Stream, StreamExt};
+use futures::{stream::BoxStream, SinkExt, Stream, StreamExt};
 use libp2p::swarm::handler::{
     ConnectionEvent, ConnectionHandler, ConnectionHandlerEvent, ConnectionHandlerUpgrErr,
     DialUpgradeError, FullyNegotiatedInbound, FullyNegotiatedOutbound, KeepAlive,
     SubstreamProtocol,
 };
 use libp2p::swarm::NegotiatedSubstream;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{trace, warn};
 
 use crate::store::{GetResult, Store};
@@ -90,8 +94,12 @@ pub struct Handler<S: Store> {
     /// The configuration container for the handler
     config: HandlerConfig,
 
-    outbound_substreams: SelectAll<BoxStream<'static, ConnHandlerEvent>>,
-    inbound_substreams: SelectAll<BoxStream<'static, ConnHandlerEvent>>,
+    num_substreams: Arc<AtomicU64>,
+    outbound_substreams: mpsc::Sender<(Request, Framed<NegotiatedSubstream, MemesyncCodec>)>,
+    inbound_substreams: mpsc::Sender<(Request, Framed<NegotiatedSubstream, MemesyncCodec>, S)>,
+    substream_events: mpsc::Receiver<ConnHandlerEvent>,
+
+    task: JoinHandle<()>,
 
     store: S,
 }
@@ -99,6 +107,51 @@ pub struct Handler<S: Store> {
 impl<S: Store> Handler<S> {
     /// Creates a `Handler`.
     pub fn new(store: S, config: HandlerConfig) -> Self {
+        let (out_sender, mut out_receiver): (mpsc::Sender<(Request, _)>, _) = mpsc::channel(64);
+        let (in_sender, mut in_receiver): (mpsc::Sender<(Request, _, S)>, _) = mpsc::channel(64);
+        let (events_sender, events_receiver) = mpsc::channel(64);
+        let num_substreams = Arc::new(AtomicU64::new(0));
+
+        let num_substreams_c = num_substreams.clone();
+        let task = tokio::task::spawn(async move {
+            let num_substreams = num_substreams_c;
+            // TODO: substream limit
+
+            let mut streams = tokio_stream::StreamMap::new();
+
+            loop {
+                tokio::select! {
+                    Some((req, stream, store)) = in_receiver.recv() => {
+                        let id: QueryId = req.id;
+                        let stream = create_inbound_stream(req, stream, store);
+                        streams.insert(format!("in-{:?}", id), stream);
+                        num_substreams.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Some((req, stream)) = out_receiver.recv() => {
+                        let id: QueryId = req.id;
+                        let stream = create_outbound_stream(req, stream);
+                        streams.insert(format!("out-{:?}", id), stream);
+                        num_substreams.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Some((_, ev)) = streams.next() => {
+                        match ev {
+                            StreamEvent::Conn(ev) => {
+                                if let Err(_err) = events_sender.send(ev).await {
+                                    break;
+                                }
+                            }
+                            StreamEvent::Done => {
+                                num_substreams.fetch_sub(1, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                    else => {
+                        break;
+                    }
+                }
+            }
+        });
+
         Handler {
             pending_error: None,
             events_out: Default::default(),
@@ -106,9 +159,12 @@ impl<S: Store> Handler<S> {
             dial_negotiated: 0,
             keep_alive: KeepAlive::Yes,
             config,
-            inbound_substreams: Default::default(),
-            outbound_substreams: Default::default(),
+            inbound_substreams: in_sender,
+            outbound_substreams: out_sender,
+            substream_events: events_receiver,
+            num_substreams,
             store,
+            task,
         }
     }
 
@@ -180,16 +236,12 @@ impl<S: Store> ConnectionHandler for Handler<S> {
             }
         }
 
-        if let Poll::Ready(Some(event)) = self.outbound_substreams.poll_next_unpin(cx) {
+        if let Poll::Ready(Some(event)) = self.substream_events.poll_recv(cx) {
             return Poll::Ready(event);
         }
 
-        if let Poll::Ready(Some(event)) = self.inbound_substreams.poll_next_unpin(cx) {
-            return Poll::Ready(event);
-        }
-
-        if self.outbound_substreams.is_empty() && self.inbound_substreams.is_empty() {
-            // We destroyed all substreams in this function.
+        if self.num_substreams.load(Ordering::SeqCst) == 0 {
+            // No more substreams available
             self.keep_alive = KeepAlive::Until(Instant::now() + self.config.keep_alive_timeout);
         } else {
             self.keep_alive = KeepAlive::Yes;
@@ -218,19 +270,15 @@ impl<S: Store> ConnectionHandler for Handler<S> {
                         KeepAlive::Until(Instant::now() + self.config.keep_alive_timeout);
                 }
 
-                self.inbound_substreams.push(create_inbound_stream(
-                    req,
-                    stream,
-                    self.store.clone(),
-                ));
+                self.inbound_substreams
+                    .try_send((req, stream, self.store.clone()));
             }
             ConnectionEvent::FullyNegotiatedOutbound(FullyNegotiatedOutbound {
                 protocol: stream,
                 info: initial_message,
             }) => {
                 self.dial_negotiated -= 1;
-                self.outbound_substreams
-                    .push(create_outbound_stream(initial_message, stream));
+                self.outbound_substreams.try_send((initial_message, stream));
             }
             ConnectionEvent::DialUpgradeError(DialUpgradeError { error, .. }) => {
                 if self.pending_error.is_none() {
@@ -243,10 +291,15 @@ impl<S: Store> ConnectionHandler for Handler<S> {
     }
 }
 
+enum StreamEvent {
+    Conn(ConnHandlerEvent),
+    Done,
+}
+
 fn create_outbound_stream(
     req: Request,
     mut stream: Framed<NegotiatedSubstream, MemesyncCodec>,
-) -> BoxStream<'static, ConnHandlerEvent> {
+) -> BoxStream<'static, StreamEvent> {
     trace!("new outbound stream: {:?}", req);
 
     async_stream::stream! {
@@ -277,13 +330,13 @@ fn create_outbound_stream(
                     trace!("response received: {:?}", resp);
                     if resp.id != id {
                         warn!("invalid query id received: {:?} != {:?}", resp.id, id);
-                        yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
+                        yield StreamEvent::Conn(ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id }));
                         break;
                     }
                     // Verify incoming data
                     if cids.is_empty() {
                         warn!("received more responses than expected");
-                        yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
+                        yield StreamEvent::Conn(ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id }));
                         break;
                     }
 
@@ -297,7 +350,7 @@ fn create_outbound_stream(
                             trace!("checking link {:?}", name);
                             if !iroh_util::verify_hash(&cid, &bytes).unwrap_or_default() {
                                 warn!("received invalid block: {:?} ({})", name, cid);
-                                yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
+                                yield StreamEvent::Conn(ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id }));
                                 break;
                             }
 
@@ -333,20 +386,20 @@ fn create_outbound_stream(
                                     cids.push_back((name.clone(), *next_link));
                                 } else {
                                     warn!("query invalid");
-                                    yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
+                                    yield StreamEvent::Conn(ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id }));
                                     break;
                                 }
                             }
 
                             // Yield the response.
-                            yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseProgress {
+                            yield StreamEvent::Conn(ConnectionHandlerEvent::Custom(HandlerEvent::ResponseProgress {
                                 id: resp.id,
                                 index: res_ok.index,
                                 last: res_ok.last,
                                 data: res_ok.data,
                                 links,
                                 cid,
-                            });
+                            }));
 
                             if res_ok.last {
                                 break;
@@ -355,7 +408,7 @@ fn create_outbound_stream(
                         Err(err) => {
                             warn!("response error: {:?}", err);
                             // Yield the response.
-                            yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id: resp.id });
+                            yield StreamEvent::Conn(ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id: resp.id }));
                             break;
                         }
                     }
@@ -370,6 +423,8 @@ fn create_outbound_stream(
         if let Err(err) = stream.close().await {
             warn!("failed to close stream: {:?}", err);
         }
+
+        yield StreamEvent::Done;
     }
     .boxed()
 }
@@ -378,7 +433,7 @@ fn create_inbound_stream<S: Store>(
     req: Request,
     mut stream: Framed<NegotiatedSubstream, MemesyncCodec>,
     store: S,
-) -> BoxStream<'static, ConnHandlerEvent> {
+) -> BoxStream<'static, StreamEvent> {
     trace!("new inbound stream: {:?}", req);
     async_stream::stream! {
         let responses = create_response_stream(req.clone(), store);
@@ -388,9 +443,9 @@ fn create_inbound_stream<S: Store>(
 
             if let Err(err) = stream.feed(Message::Response(response)).await {
                 warn!("failed to write item: {:?}", err);
-                yield ConnectionHandlerEvent::Custom(
+                yield StreamEvent::Conn(ConnectionHandlerEvent::Custom(
                     HandlerEvent::RequestFailed { request: req, err }
-                );
+                ));
                 break;
             }
         }
@@ -402,6 +457,7 @@ fn create_inbound_stream<S: Store>(
         if let Err(err) = stream.close().await {
             warn!("failed to close stream: {:?}", err);
         }
+        yield StreamEvent::Done;
     }
     .boxed()
 }

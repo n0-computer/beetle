@@ -25,6 +25,7 @@ async-trait.workspace = true
 async-stream.workspace = true
 unsigned-varint = { workspace = true, features = ["asynchronous_codec"] }
 iroh-util.workspace = true
+tokio-stream.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
