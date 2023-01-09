@@ -114,7 +114,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
         self.resolver.resolve(path).await.map_err(|e| e.to_string())
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, path_metadata))]
     pub async fn get_file(
         &self,
         path: iroh_resolver::resolver::Path,

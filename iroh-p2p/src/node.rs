@@ -380,7 +380,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             let worker = tokio::task::spawn(async move {
                 tokio::select! {
                     _ = closer_r => {
-                        // Explicit sesssion stop.
+                        // Explicit session stop.
                         debug!("session {}: stopped: closed", ctx);
                     }
                     _ = chan.closed() => {

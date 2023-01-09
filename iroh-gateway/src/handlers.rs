@@ -717,7 +717,7 @@ async fn serve_car_recursive<T: ContentLoader + Unpin>(
     Ok(GatewayResponse::new(StatusCode::OK, body, headers))
 }
 
-#[tracing::instrument()]
+#[tracing::instrument(skip_all)]
 #[async_recursion]
 async fn serve_fs<T: ContentLoader + Unpin>(
     req: &IpfsRequest,
@@ -842,7 +842,7 @@ async fn serve_fs<T: ContentLoader + Unpin>(
     }
 }
 
-#[tracing::instrument()]
+#[tracing::instrument(skip_all)]
 async fn serve_fs_dir<T: ContentLoader + Unpin>(
     dir_list: &[Link],
     req: &IpfsRequest,
