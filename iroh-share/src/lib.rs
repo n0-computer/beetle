@@ -139,8 +139,7 @@ mod tests {
         let file_1 = FileBuilder::new()
             .name("bar.txt")
             .content_bytes(&b"bar"[..])
-            .build()
-            .await?;
+            .build()?;
 
         let mut bytes = vec![0u8; 5 * 1024 * 1024 - 8];
         rand::thread_rng().fill_bytes(&mut bytes);
@@ -149,8 +148,7 @@ mod tests {
         let file_2 = FileBuilder::new()
             .name("baz.txt")
             .content_reader(f)
-            .build()
-            .await?;
+            .build()?;
         let dir_builder = DirectoryBuilder::new()
             .name("foo")
             .add_file(file_1)

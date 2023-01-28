@@ -214,12 +214,11 @@ mod tests {
                 .name(name)
                 .content_bytes(content.to_vec())
                 .build()
-                .await
                 .unwrap();
             dir_builder = dir_builder.add_file(file);
         }
 
-        let root_dir = dir_builder.build().await.unwrap();
+        let root_dir = dir_builder.build().unwrap();
         let mut parts = root_dir.encode();
         while let Some(part) = parts.next().await {
             let (cid, bytes, links) = part.unwrap().into_parts();

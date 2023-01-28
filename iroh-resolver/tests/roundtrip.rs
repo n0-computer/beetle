@@ -37,8 +37,7 @@ async fn build_directory(name: &str, dir: &TestDir, hamt: bool) -> Result<Direct
                 let file = FileBuilder::new()
                     .name(name)
                     .content_bytes(content.to_vec())
-                    .build()
-                    .await?;
+                    .build()?;
                 builder = builder.add_file(file);
             }
             TestDirEntry::Directory(dir) => {
@@ -47,7 +46,7 @@ async fn build_directory(name: &str, dir: &TestDir, hamt: bool) -> Result<Direct
             }
         }
     }
-    builder.build().await
+    builder.build()
 }
 
 /// builds a TestDir out of a stream of blocks and a resolver
@@ -138,8 +137,7 @@ async fn file_roundtrip_test(
         .fixed_chunker(chunk_size)
         .degree(degree)
         .content_bytes(data.clone())
-        .build()
-        .await?;
+        .build()?;
     let stream = file.encode().await?;
     let (root, resolver) = stream_to_resolver(stream).await?;
     let out = resolver

@@ -161,7 +161,9 @@ impl<S: Store> Bitswap<S> {
                     let message = tokio::task::spawn_blocking(move || {
                         message.verify_blocks();
                         message
-                    }).await.expect("cannot spawn blocking thread");
+                    })
+                    .await
+                    .expect("cannot spawn blocking thread");
                     if let Some(ref server) = server {
                         futures::future::join(
                             client.receive_message(&peer, &message),
