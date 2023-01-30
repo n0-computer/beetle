@@ -192,7 +192,7 @@ impl Api {
         };
 
         Ok(Box::pin(
-            add_blocks_to_store(Some(self.client.clone()), blocks).await,
+            add_blocks_to_store(Some(self.client.clone()), blocks),
         ))
     }
 

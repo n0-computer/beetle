@@ -94,7 +94,7 @@ fn stream_balanced_tree(
             // check if the leaf node of the tree is full
             if tree[0].len() == degree {
                 // if so, iterate through nodes
-                for i in 0..tree_len {
+                for i in 1..tree_len {
                     // if we encounter any nodes that are not full, break
                     if tree[i].len() < degree {
                         break;
@@ -115,13 +115,13 @@ fn stream_balanced_tree(
                     // add link_info to parent node
                     tree[i+1].push((cid, link_info));
                 }
-                // at this point the tree will be able to recieve new links
+                // at this point the tree will be able to receive new links
                 // without "overflowing", aka the leaf node and stem nodes
                 // have fewer than `degree` number of links
             }
 
             // now that we know the tree is in a "healthy" state to
-            // recieve more links, add the link to the tree
+            // receive more links, add the link to the tree
             tree[0].push((*block.cid(), link_info));
             yield block;
             // at this point, the leaf node may have `degree` number of
@@ -134,7 +134,7 @@ fn stream_balanced_tree(
         }
 
         // clean up, aka yield the rest of the stem nodes
-        // since all the stem nodes are able to recieve links
+        // since all the stem nodes are able to receive links
         // we don't have to worry about "overflow"
         while let Some(links) = tree.pop_front() {
             let (block, link_info) = TreeNode::Stem(links).encode()?;
@@ -191,7 +191,7 @@ fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNo
 // Leaf and Stem nodes are the two types of nodes that can exist in the tree
 // Leaf nodes encode to `UnixfsNode::Raw`
 // Stem nodes encode to `UnixfsNode::File`
-enum TreeNode {
+pub enum TreeNode {
     Leaf(Bytes),
     Stem(Vec<(Cid, LinkInfo)>),
 }
