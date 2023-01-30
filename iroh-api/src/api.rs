@@ -11,6 +11,7 @@ use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::{Client, ClientStatus};
+use iroh_unixfs::balanced_tree::DEFAULT_CODE;
 use iroh_unixfs::{
     builder::Entry as UnixfsEntry,
     content_loader::{FullLoader, FullLoaderConfig},
@@ -182,18 +183,19 @@ impl Api {
     ) -> Result<BoxStream<'static, Result<(Cid, u64)>>> {
         let blocks = match entry {
             UnixfsEntry::File(f) => f.encode().await?.boxed(),
-            UnixfsEntry::Directory(d) => d.encode(),
+            UnixfsEntry::Directory(d) => d.encode(&DEFAULT_CODE),
             UnixfsEntry::Symlink(s) => Box::pin(async_stream::try_stream! {
-                yield s.encode()?
+                yield s.encode(&DEFAULT_CODE)?
             }),
             UnixfsEntry::RawBlock(r) => Box::pin(async_stream::try_stream! {
                 yield r.encode()?
             }),
         };
 
-        Ok(Box::pin(
-            add_blocks_to_store(Some(self.client.clone()), blocks),
-        ))
+        Ok(Box::pin(add_blocks_to_store(
+            Some(self.client.clone()),
+            blocks,
+        )))
     }
 
     /// The `add` method encodes the entry into a DAG and adds the resulting

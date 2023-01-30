@@ -130,6 +130,7 @@ mod tests {
     use iroh_rpc_client::Config as RpcClientConfig;
     use iroh_rpc_types::store::StoreAddr;
     use iroh_rpc_types::Addr;
+    use iroh_unixfs::balanced_tree::DEFAULT_CODE;
     use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
     use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
     use iroh_unixfs::unixfs::UnixfsNode;
@@ -219,7 +220,7 @@ mod tests {
         }
 
         let root_dir = dir_builder.build().unwrap();
-        let mut parts = root_dir.encode();
+        let mut parts = root_dir.encode(&DEFAULT_CODE);
         while let Some(part) = parts.next().await {
             let (cid, bytes, links) = part.unwrap().into_parts();
             cids.push(cid);

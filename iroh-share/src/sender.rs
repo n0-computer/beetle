@@ -5,6 +5,7 @@ use bytes::Bytes;
 use futures::channel::oneshot::{channel as oneshot, Receiver as OneShotReceiver};
 use futures::StreamExt;
 use iroh_p2p::{GossipsubEvent, NetworkEvent};
+use iroh_unixfs::balanced_tree::DEFAULT_CODE;
 use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
 use libp2p::gossipsub::Sha256Topic;
 use rand::Rng;
@@ -65,7 +66,7 @@ impl Sender {
         let p2p_rpc = p2p.rpc().try_p2p()?;
         let store = p2p.rpc().try_store()?;
         let (root, num_parts) = {
-            let parts = root_dir.encode();
+            let parts = root_dir.encode(&DEFAULT_CODE);
             tokio::pin!(parts);
             let mut num_parts = 0;
             let mut root_cid = None;

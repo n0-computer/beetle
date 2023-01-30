@@ -21,12 +21,12 @@ use crate::{
     types::{Block, Link, LinkRef, Links, PbLinks},
 };
 
-pub(crate) mod unixfs_pb {
+pub mod unixfs_pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
 }
 
-pub(crate) mod dag_pb {
+pub mod dag_pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/merkledag_pb.rs"));
 }
@@ -179,12 +179,12 @@ impl UnixfsNode {
         }
     }
 
-    pub fn encode(&self) -> Result<Block> {
+    pub fn encode(&self, code: &multihash::Code) -> Result<Block> {
         let res = match self {
             UnixfsNode::Raw(data) => {
                 let out = data.clone();
                 let links = vec![];
-                let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&out));
+                let cid = Cid::new_v1(Codec::Raw as _, code.digest(&out));
                 Block::new(cid, out, links)
             }
             UnixfsNode::RawNode(node)
@@ -197,10 +197,7 @@ impl UnixfsNode {
                     .links()
                     .map(|x| Ok(x?.cid))
                     .collect::<Result<Vec<_>>>()?;
-                let cid = Cid::new_v1(
-                    Codec::DagPb as _,
-                    cid::multihash::Code::Sha2_256.digest(&out),
-                );
+                let cid = Cid::new_v1(Codec::DagPb as _, code.digest(&out));
                 Block::new(cid, out, links)
             }
         };

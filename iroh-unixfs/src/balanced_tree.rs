@@ -13,22 +13,26 @@ use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
 /// Default degree number for balanced tree, taken from unixfs specs
 /// <https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout>
 pub const DEFAULT_DEGREE: usize = 174;
+pub const DEFAULT_CODE: multihash::Code = multihash::Code::Sha2_256;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TreeBuilder {
     /// TreeBuilder that builds a "balanced tree" with a max degree size of
     /// degree
-    Balanced { degree: usize },
+    Balanced {
+        degree: usize,
+        code: multihash::Code,
+    },
 }
 
 impl TreeBuilder {
     pub fn balanced_tree() -> Self {
-        Self::balanced_tree_with_degree(DEFAULT_DEGREE)
+        Self::balanced_tree_with_degree_and_code(DEFAULT_DEGREE, DEFAULT_CODE)
     }
 
-    pub fn balanced_tree_with_degree(degree: usize) -> Self {
+    pub fn balanced_tree_with_degree_and_code(degree: usize, code: multihash::Code) -> Self {
         assert!(degree > 1);
-        TreeBuilder::Balanced { degree }
+        TreeBuilder::Balanced { degree, code }
     }
 
     pub fn stream_tree(
@@ -36,20 +40,32 @@ impl TreeBuilder {
         chunks: impl Stream<Item = std::io::Result<Bytes>> + Send,
     ) -> impl Stream<Item = Result<Block>> {
         match self {
-            TreeBuilder::Balanced { degree } => stream_balanced_tree(chunks, *degree),
+            TreeBuilder::Balanced { degree, code } => {
+                stream_balanced_tree(chunks, *degree, code.clone())
+            }
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct LinkInfo {
-    raw_data_len: u64,
-    encoded_len: u64,
+pub struct LinkInfo {
+    pub raw_data_len: u64,
+    pub encoded_len: u64,
+}
+
+impl LinkInfo {
+    pub fn new(raw_data_len: u64, encoded_len: u64) -> LinkInfo{
+        LinkInfo {
+            raw_data_len,
+            encoded_len
+        }
+    }
 }
 
 fn stream_balanced_tree(
     in_stream: impl Stream<Item = std::io::Result<Bytes>> + Send,
     degree: usize,
+    code: multihash::Code,
 ) -> impl Stream<Item = Result<Block>> {
     try_stream! {
         // degree = 8
@@ -80,8 +96,9 @@ fn stream_balanced_tree(
         let hash_par: usize = 8;
 
         let in_stream = in_stream.err_into::<anyhow::Error>().map(|chunk| {
-            tokio::task::spawn_blocking(|| {
-                chunk.and_then(|chunk| TreeNode::Leaf(chunk).encode())
+            let code = code.clone();
+            tokio::task::spawn_blocking(move || {
+                chunk.and_then(|chunk| TreeNode::Leaf(chunk).encode(&code))
             }).err_into::<anyhow::Error>()
         }).buffered(hash_par).map(|x| x.and_then(|x| x));
 
@@ -108,7 +125,7 @@ fn stream_balanced_tree(
 
                     // create node, keeping the cid
                     let links = std::mem::replace(&mut tree[i], Vec::with_capacity(degree));
-                    let (block, link_info) = TreeNode::Stem(links).encode()?;
+                    let (block, link_info) = TreeNode::Stem(links).encode(&code)?;
                     let cid = *block.cid();
                     yield block;
 
@@ -137,7 +154,7 @@ fn stream_balanced_tree(
         // since all the stem nodes are able to receive links
         // we don't have to worry about "overflow"
         while let Some(links) = tree.pop_front() {
-            let (block, link_info) = TreeNode::Stem(links).encode()?;
+            let (block, link_info) = TreeNode::Stem(links).encode(&code)?;
             let cid = *block.cid();
             yield block;
 
@@ -191,18 +208,19 @@ fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNo
 // Leaf and Stem nodes are the two types of nodes that can exist in the tree
 // Leaf nodes encode to `UnixfsNode::Raw`
 // Stem nodes encode to `UnixfsNode::File`
+#[derive(Debug)]
 pub enum TreeNode {
     Leaf(Bytes),
     Stem(Vec<(Cid, LinkInfo)>),
 }
 
 impl TreeNode {
-    fn encode(self) -> Result<(Block, LinkInfo)> {
+    pub fn encode(self, code: &multihash::Code) -> Result<(Block, LinkInfo)> {
         match self {
             TreeNode::Leaf(bytes) => {
                 let len = bytes.len();
                 let node = UnixfsNode::Raw(bytes);
-                let block = node.encode()?;
+                let block = node.encode(code)?;
                 let link_info = LinkInfo {
                     // in a leaf the raw data len and encoded len are the same since our leaf
                     // nodes are raw unixfs nodes
@@ -214,7 +232,7 @@ impl TreeNode {
             TreeNode::Stem(links) => {
                 let mut encoded_len: u64 = links.iter().map(|(_, l)| l.encoded_len).sum();
                 let node = create_unixfs_node_from_links(links)?;
-                let block = node.encode()?;
+                let block = node.encode(code)?;
                 encoded_len += block.data().len() as u64;
                 let raw_data_len = node
                     .filesize()
@@ -253,7 +271,7 @@ mod tests {
         if num_chunks / degree == 0 {
             let chunk = chunks.next().await.unwrap().unwrap();
             let leaf = TreeNode::Leaf(chunk);
-            let (block, _) = leaf.encode().unwrap();
+            let (block, _) = leaf.encode(&multihash::Code::Sha2_256).unwrap();
             tree[0].push(block);
             return tree;
         }
@@ -261,7 +279,7 @@ mod tests {
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk.unwrap();
             let leaf = TreeNode::Leaf(chunk);
-            let (block, link_info) = leaf.encode().unwrap();
+            let (block, link_info) = leaf.encode(&multihash::Code::Sha2_256).unwrap();
             links[0].push((*block.cid(), link_info));
             tree[0].push(block);
         }
@@ -273,7 +291,7 @@ mod tests {
             let mut links_layer = Vec::with_capacity(count);
             for links in prev_layer.chunks(degree) {
                 let stem = TreeNode::Stem(links.to_vec());
-                let (block, link_info) = stem.encode().unwrap();
+                let (block, link_info) = stem.encode(&multihash::Code::Sha2_256).unwrap();
                 links_layer.push((*block.cid(), link_info));
                 tree_layer.push(block);
             }
@@ -337,12 +355,14 @@ mod tests {
 
     fn make_leaf(data: usize) -> (Block, LinkInfo) {
         TreeNode::Leaf(BytesMut::from(&data.to_be_bytes()[..]).freeze())
-            .encode()
+            .encode(&multihash::Code::Sha2_256)
             .unwrap()
     }
 
     fn make_stem(links: Vec<(Cid, LinkInfo)>) -> (Block, LinkInfo) {
-        TreeNode::Stem(links).encode().unwrap()
+        TreeNode::Stem(links)
+            .encode(&multihash::Code::Sha2_256)
+            .unwrap()
     }
 
     #[tokio::test]
@@ -450,7 +470,7 @@ mod tests {
     async fn balanced_tree_test_leaf() {
         let num_chunks = 1;
         let expect = build_expect(num_chunks, 3).await;
-        let got = stream_balanced_tree(test_chunk_stream(1), 3);
+        let got = stream_balanced_tree(test_chunk_stream(1), 3, multihash::Code::Sha2_256);
         tokio::pin!(got);
         ensure_equal(expect, got, num_chunks as u64 * CHUNK_SIZE).await;
     }
@@ -460,7 +480,11 @@ mod tests {
         let num_chunks = 3;
         let degrees = 3;
         let expect = build_expect(num_chunks, degrees).await;
-        let got = stream_balanced_tree(test_chunk_stream(num_chunks), degrees);
+        let got = stream_balanced_tree(
+            test_chunk_stream(num_chunks),
+            degrees,
+            multihash::Code::Sha2_256,
+        );
         tokio::pin!(got);
         ensure_equal(expect, got, num_chunks as u64 * CHUNK_SIZE).await;
     }
@@ -470,7 +494,11 @@ mod tests {
         let degrees = 3;
         let num_chunks = 9;
         let expect = build_expect(num_chunks, degrees).await;
-        let got = stream_balanced_tree(test_chunk_stream(num_chunks), degrees);
+        let got = stream_balanced_tree(
+            test_chunk_stream(num_chunks),
+            degrees,
+            multihash::Code::Sha2_256,
+        );
         tokio::pin!(got);
         ensure_equal(expect, got, num_chunks as u64 * CHUNK_SIZE).await;
     }
@@ -480,7 +508,11 @@ mod tests {
         let degrees = 3;
         let num_chunks = 10;
         let expect = build_expect(num_chunks, degrees).await;
-        let got = stream_balanced_tree(test_chunk_stream(num_chunks), degrees);
+        let got = stream_balanced_tree(
+            test_chunk_stream(num_chunks),
+            degrees,
+            multihash::Code::Sha2_256,
+        );
         tokio::pin!(got);
         ensure_equal(expect, got, num_chunks as u64 * CHUNK_SIZE).await;
     }
@@ -490,7 +522,11 @@ mod tests {
         let num_chunks = 125;
         let degrees = 5;
         let expect = build_expect(num_chunks, degrees).await;
-        let got = stream_balanced_tree(test_chunk_stream(num_chunks), degrees);
+        let got = stream_balanced_tree(
+            test_chunk_stream(num_chunks),
+            degrees,
+            multihash::Code::Sha2_256,
+        );
         tokio::pin!(got);
         ensure_equal(expect, got, num_chunks as u64 * CHUNK_SIZE).await;
     }
@@ -500,7 +536,11 @@ mod tests {
         let num_chunks = 780;
         let degrees = 11;
         let expect = build_expect(num_chunks, degrees).await;
-        let got = stream_balanced_tree(test_chunk_stream(num_chunks), degrees);
+        let got = stream_balanced_tree(
+            test_chunk_stream(num_chunks),
+            degrees,
+            multihash::Code::Sha2_256,
+        );
         tokio::pin!(got);
         ensure_equal(expect, got, num_chunks as u64 * CHUNK_SIZE).await;
     }
