@@ -85,7 +85,7 @@ fn add_blocks_to_store_chunked<S: Store>(
     }
 }
 
-pub async fn add_blocks_to_store<S: Store>(
+pub fn add_blocks_to_store<S: Store>(
     store: Option<S>,
     blocks: Pin<Box<dyn Stream<Item = Result<Block>> + Send>>,
 ) -> impl Stream<Item = Result<(Cid, u64)>> {
