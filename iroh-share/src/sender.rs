@@ -66,7 +66,7 @@ impl Sender {
         let p2p_rpc = p2p.rpc().try_p2p()?;
         let store = p2p.rpc().try_store()?;
         let (root, num_parts) = {
-            let parts = root_dir.encode(&DEFAULT_CODE);
+            let parts = root_dir.encode(DEFAULT_CODE);
             tokio::pin!(parts);
             let mut num_parts = 0;
             let mut root_cid = None;

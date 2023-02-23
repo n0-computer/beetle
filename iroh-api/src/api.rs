@@ -183,9 +183,9 @@ impl Api {
     ) -> Result<BoxStream<'static, Result<(Cid, u64)>>> {
         let blocks = match entry {
             UnixfsEntry::File(f) => f.encode().await?.boxed(),
-            UnixfsEntry::Directory(d) => d.encode(&DEFAULT_CODE),
+            UnixfsEntry::Directory(d) => d.encode(DEFAULT_CODE),
             UnixfsEntry::Symlink(s) => Box::pin(async_stream::try_stream! {
-                yield s.encode(&DEFAULT_CODE)?
+                yield s.encode(DEFAULT_CODE)?
             }),
             UnixfsEntry::RawBlock(r) => Box::pin(async_stream::try_stream! {
                 yield r.encode()?

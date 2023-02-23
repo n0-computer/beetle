@@ -93,7 +93,7 @@ impl Directory {
         Directory::single("".into(), Entry::Directory(self))
     }
 
-    pub async fn encode_root(self, code: &multihash::Code) -> Result<Block> {
+    pub async fn encode_root(self, code: multihash::Code) -> Result<Block> {
         let mut current = None;
         let parts = self.encode(code);
         tokio::pin!(parts);
@@ -105,7 +105,7 @@ impl Directory {
         current.expect("must not be empty")
     }
 
-    pub fn encode<'a>(self, code: &multihash::Code) -> BoxStream<'a, Result<Block>> {
+    pub fn encode<'a>(self, code: multihash::Code) -> BoxStream<'a, Result<Block>> {
         match self {
             Directory::Basic(basic) => basic.encode(code),
             Directory::Hamt(hamt) => hamt.encode(code),
@@ -114,13 +114,12 @@ impl Directory {
 }
 
 impl BasicDirectory {
-    pub fn encode<'a>(self, code: &multihash::Code) -> BoxStream<'a, Result<Block>> {
-        let code = code.clone();
+    pub fn encode<'a>(self, code: multihash::Code) -> BoxStream<'a, Result<Block>> {
         async_stream::try_stream! {
             let mut links = Vec::new();
             for entry in self.entries {
                 let name = entry.name().to_string();
-                let parts = entry.encode(&code).await?;
+                let parts = entry.encode(code).await?;
                 tokio::pin!(parts);
                 let mut root = None;
                 let mut size = 0u64;
@@ -145,14 +144,14 @@ impl BasicDirectory {
             };
             let outer = encode_unixfs_pb(&inner, links)?;
             let node = UnixfsNode::Directory(Node { outer, inner });
-            yield node.encode(&code)?;
+            yield node.encode(code)?;
         }
         .boxed()
     }
 }
 
 impl HamtDirectory {
-    pub fn encode<'a>(self, code: &multihash::Code) -> BoxStream<'a, Result<Block>> {
+    pub fn encode<'a>(self, code: multihash::Code) -> BoxStream<'a, Result<Block>> {
         self.hamt.encode(code)
     }
 }
@@ -264,7 +263,7 @@ impl Symlink {
         &self.name
     }
 
-    pub fn encode(self, code: &multihash::Code) -> Result<Block> {
+    pub fn encode(self, code: multihash::Code) -> Result<Block> {
         let target = self
             .target
             .to_str()
@@ -463,7 +462,7 @@ impl Entry {
         }
     }
 
-    pub async fn encode(self, code: &multihash::Code) -> Result<BoxStream<'static, Result<Block>>> {
+    pub async fn encode(self, code: multihash::Code) -> Result<BoxStream<'static, Result<Block>>> {
         Ok(match self {
             Entry::File(f) => f.encode().await?.boxed(),
             Entry::Directory(d) => d.encode(code),
@@ -595,7 +594,7 @@ impl DirectoryBuilder {
 
     pub async fn add_path(self, path: impl Into<PathBuf>) -> Result<Self> {
         let chunker = self.chunker.clone();
-        let degree = self.degree.clone();
+        let degree = self.degree;
         Ok(self.add_entries(
             make_entries_from_path(path, chunker, degree)
                 .await?
@@ -680,8 +679,7 @@ impl HamtNode {
         }
     }
 
-    pub fn encode<'a>(self, code: &multihash::Code) -> BoxStream<'a, Result<Block>> {
-        let code = code.clone();
+    pub fn encode<'a>(self, code: multihash::Code) -> BoxStream<'a, Result<Block>> {
         match self {
             Self::Branch(tree) => {
                 async_stream::try_stream! {
@@ -690,7 +688,7 @@ impl HamtNode {
                     for (prefix, node) in tree {
                         let name = format!("{:02X}{}", prefix, node.name());
                         bitfield.set_bit(prefix);
-                        let blocks = node.encode(&code);
+                        let blocks = node.encode(code);
                         let mut root = None;
                         tokio::pin!(blocks);
                         while let Some(block) = blocks.next().await {
@@ -715,11 +713,11 @@ impl HamtNode {
                     // it does not really matter what enum variant we choose here as long as
                     // it is not raw. The type of the node will be HamtShard from above.
                     let node = UnixfsNode::Directory(crate::unixfs::Node { outer, inner });
-                    yield node.encode(&code)?;
+                    yield node.encode(code)?;
                 }
                 .boxed()
             }
-            Self::Leaf(HamtLeaf(_hash, entry)) => async move { entry.encode(&code).await }
+            Self::Leaf(HamtLeaf(_hash, entry)) => async move { entry.encode(code).await }
                 .try_flatten_stream()
                 .boxed(),
         }
@@ -862,12 +860,12 @@ mod tests {
             let mut baz = SymlinkBuilder::new("baz.txt");
             baz.target("bat.txt");
             let baz = baz.build().await?;
-            baz.encode(&multihash::Code::Sha2_256)?
+            baz.encode(multihash::Code::Sha2_256)?
         };
 
         let dir = dir.add_file(bar).add_symlink(baz).build()?;
 
-        let dir_block = dir.encode_root(&multihash::Code::Sha2_256).await?;
+        let dir_block = dir.encode_root(multihash::Code::Sha2_256).await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
@@ -919,12 +917,12 @@ mod tests {
             let mut baz = SymlinkBuilder::new("baz.txt");
             baz.target("bat.txt");
             let baz = baz.build().await?;
-            baz.encode(&multihash::Code::Sha2_256)?
+            baz.encode(multihash::Code::Sha2_256)?
         };
 
         let dir = dir.add_file(bar).add_symlink(baz).build()?;
 
-        let dir_block = dir.encode_root(&multihash::Code::Sha2_256).await?;
+        let dir_block = dir.encode_root(multihash::Code::Sha2_256).await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
@@ -997,7 +995,7 @@ mod tests {
 
         let dir = dir.add_file(bar).add_file(baz).build()?;
 
-        let dir_block = dir.encode_root(&multihash::Code::Sha2_256).await?;
+        let dir_block = dir.encode_root(multihash::Code::Sha2_256).await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();

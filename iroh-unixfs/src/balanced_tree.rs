@@ -40,9 +40,7 @@ impl TreeBuilder {
         chunks: impl Stream<Item = std::io::Result<Bytes>> + Send,
     ) -> impl Stream<Item = Result<Block>> {
         match self {
-            TreeBuilder::Balanced { degree, code } => {
-                stream_balanced_tree(chunks, *degree, code.clone())
-            }
+            TreeBuilder::Balanced { degree, code } => stream_balanced_tree(chunks, *degree, *code),
         }
     }
 }
@@ -54,10 +52,10 @@ pub struct LinkInfo {
 }
 
 impl LinkInfo {
-    pub fn new(raw_data_len: u64, encoded_len: u64) -> LinkInfo{
+    pub fn new(raw_data_len: u64, encoded_len: u64) -> LinkInfo {
         LinkInfo {
             raw_data_len,
-            encoded_len
+            encoded_len,
         }
     }
 }
@@ -98,7 +96,7 @@ fn stream_balanced_tree(
         let in_stream = in_stream.err_into::<anyhow::Error>().map(|chunk| {
             let code = code.clone();
             tokio::task::spawn_blocking(move || {
-                chunk.and_then(|chunk| TreeNode::Leaf(chunk).encode(&code))
+                chunk.and_then(|chunk| TreeNode::Leaf(chunk).encode(code))
             }).err_into::<anyhow::Error>()
         }).buffered(hash_par).map(|x| x.and_then(|x| x));
 
@@ -125,7 +123,7 @@ fn stream_balanced_tree(
 
                     // create node, keeping the cid
                     let links = std::mem::replace(&mut tree[i], Vec::with_capacity(degree));
-                    let (block, link_info) = TreeNode::Stem(links).encode(&code)?;
+                    let (block, link_info) = TreeNode::Stem(links).encode(code)?;
                     let cid = *block.cid();
                     yield block;
 
@@ -154,7 +152,7 @@ fn stream_balanced_tree(
         // since all the stem nodes are able to receive links
         // we don't have to worry about "overflow"
         while let Some(links) = tree.pop_front() {
-            let (block, link_info) = TreeNode::Stem(links).encode(&code)?;
+            let (block, link_info) = TreeNode::Stem(links).encode(code)?;
             let cid = *block.cid();
             yield block;
 
@@ -215,7 +213,7 @@ pub enum TreeNode {
 }
 
 impl TreeNode {
-    pub fn encode(self, code: &multihash::Code) -> Result<(Block, LinkInfo)> {
+    pub fn encode(self, code: multihash::Code) -> Result<(Block, LinkInfo)> {
         match self {
             TreeNode::Leaf(bytes) => {
                 let len = bytes.len();
@@ -271,7 +269,7 @@ mod tests {
         if num_chunks / degree == 0 {
             let chunk = chunks.next().await.unwrap().unwrap();
             let leaf = TreeNode::Leaf(chunk);
-            let (block, _) = leaf.encode(&multihash::Code::Sha2_256).unwrap();
+            let (block, _) = leaf.encode(multihash::Code::Sha2_256).unwrap();
             tree[0].push(block);
             return tree;
         }
@@ -279,7 +277,7 @@ mod tests {
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk.unwrap();
             let leaf = TreeNode::Leaf(chunk);
-            let (block, link_info) = leaf.encode(&multihash::Code::Sha2_256).unwrap();
+            let (block, link_info) = leaf.encode(multihash::Code::Sha2_256).unwrap();
             links[0].push((*block.cid(), link_info));
             tree[0].push(block);
         }
@@ -291,7 +289,7 @@ mod tests {
             let mut links_layer = Vec::with_capacity(count);
             for links in prev_layer.chunks(degree) {
                 let stem = TreeNode::Stem(links.to_vec());
-                let (block, link_info) = stem.encode(&multihash::Code::Sha2_256).unwrap();
+                let (block, link_info) = stem.encode(multihash::Code::Sha2_256).unwrap();
                 links_layer.push((*block.cid(), link_info));
                 tree_layer.push(block);
             }
@@ -355,13 +353,13 @@ mod tests {
 
     fn make_leaf(data: usize) -> (Block, LinkInfo) {
         TreeNode::Leaf(BytesMut::from(&data.to_be_bytes()[..]).freeze())
-            .encode(&multihash::Code::Sha2_256)
+            .encode(multihash::Code::Sha2_256)
             .unwrap()
     }
 
     fn make_stem(links: Vec<(Cid, LinkInfo)>) -> (Block, LinkInfo) {
         TreeNode::Stem(links)
-            .encode(&multihash::Code::Sha2_256)
+            .encode(multihash::Code::Sha2_256)
             .unwrap()
     }
 

@@ -110,7 +110,7 @@ async fn build_testdir(
 /// a roundtrip test that converts a dir to an unixfs DAG and back
 async fn dir_roundtrip_test(dir: TestDir, hamt: bool) -> Result<bool> {
     let directory = build_directory("", &dir, hamt).await?;
-    let stream = directory.encode(&DEFAULT_CODE);
+    let stream = directory.encode(DEFAULT_CODE);
     let (root, resolver) = stream_to_resolver(stream).await?;
     let stream =
         resolver.resolve_recursive_with_paths(iroh_resolver::resolver::Path::from_cid(root));
@@ -155,7 +155,7 @@ async fn symlink_roundtrip_test() -> Result<()> {
     let target = "../../bar.txt";
     builder.target(target);
     let sym = builder.build().await?;
-    let block = sym.encode(&DEFAULT_CODE)?;
+    let block = sym.encode(DEFAULT_CODE)?;
     let stream = async_stream::try_stream! {
         yield block;
     };

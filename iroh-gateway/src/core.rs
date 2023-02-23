@@ -220,7 +220,7 @@ mod tests {
         }
 
         let root_dir = dir_builder.build().unwrap();
-        let mut parts = root_dir.encode(&DEFAULT_CODE);
+        let mut parts = root_dir.encode(DEFAULT_CODE);
         while let Some(part) = parts.next().await {
             let (cid, bytes, links) = part.unwrap().into_parts();
             cids.push(cid);

@@ -140,11 +140,10 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     ) -> Result<Out, String> {
         info!("retrieve path metadata {}", path);
         if raw_format {
-            return self
-                .resolver
+            self.resolver
                 .resolve_raw(path)
                 .await
-                .map_err(|e| e.to_string());
+                .map_err(|e| e.to_string())
         } else {
             self.resolver.resolve(path).await.map_err(|e| e.to_string())
         }

@@ -179,7 +179,7 @@ impl UnixfsNode {
         }
     }
 
-    pub fn encode(&self, code: &multihash::Code) -> Result<Block> {
+    pub fn encode(&self, code: multihash::Code) -> Result<Block> {
         let res = match self {
             UnixfsNode::Raw(data) => {
                 let out = data.clone();
