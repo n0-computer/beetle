@@ -424,10 +424,7 @@ impl P2p {
                         GossipsubEvent::Subscribed { topic, .. } |
                             GossipsubEvent::Unsubscribed {topic, .. } |
                             GossipsubEvent::Message { topic, .. } => {
-                                println!("gossipsub event: {:#?}", event);
-                                println!("in message topic {:#?}, expected topic {:#?}", topic, t);
                                 if *topic == t {
-                                    println!("topic match!");
                                     yield Box::new(GossipsubSubscribeResponse {event});
                                 }
                             },

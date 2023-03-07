@@ -1,63 +1,72 @@
 use std::path::Path;
 
-use anyhow::{anyhow, Result};
-use futures::{channel::oneshot, stream::BoxStream, StreamExt};
-use iroh_api::{Cid, UnixfsEntry};
-use iroh_api::{GossipsubEvent, P2pApi};
-use iroh_embed::Iroh;
+use anyhow::{anyhow, Context, Result};
+use bytes::Bytes;
+use futures::channel::oneshot::{channel as oneshot, Receiver as OneShotReceiver};
+use futures::StreamExt;
+use iroh_rpc_types::GossipsubEvent;
+use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
+use libp2p::gossipsub::Sha256Topic;
+use rand::Rng;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
-use crate::{iroh::build as build_iroh, ReceiverMessage, SenderMessage, Ticket};
+use crate::{
+    p2p_node::{P2pNode, Ticket},
+    ReceiverMessage, SenderMessage,
+};
 
+/// The sending part of the data transfer.
+#[derive(Debug)]
 pub struct Sender {
-    iroh: Iroh,
+    p2p: P2pNode,
 }
-
-type EventStream = BoxStream<'static, Result<GossipsubEvent>>;
-type ProgressStream = BoxStream<'static, Result<(Cid, u64)>>;
 
 impl Sender {
-    pub async fn new(database_path: &Path) -> Result<Self> {
-        let iroh = build_iroh(9990, database_path).await?;
-        Ok(Self { iroh })
+    pub async fn new(port: u16, db_path: &Path) -> Result<Self> {
+        let p2p = P2pNode::new(port, db_path).await?;
+
+        Ok(Sender { p2p })
     }
 
-    pub async fn make_available(&self, entry: UnixfsEntry) -> Result<ProgressStream> {
-        self.iroh.api().add_stream(entry).await
-    }
+    pub async fn transfer_from_dir_builder(
+        self,
+        dir_builder: DirectoryBuilder,
+    ) -> Result<Transfer> {
+        let id = self.next_id();
+        let Sender { p2p } = self;
 
-    pub async fn transfer(&self, root: Cid, num_parts: usize) -> Result<Transfer> {
-        Transfer::new(self.iroh.api().p2p()?.clone(), root, num_parts).await
-    }
-}
+        let t = Sha256Topic::new(format!("iroh-share-{id}"));
+        let root_dir = dir_builder.build().await?;
 
-struct Transfer {
-    api: P2pApi,
-    ticket: Ticket,
-    // progress: TODO
-    event_task: JoinHandle<()>,
-    done: oneshot::Receiver<Result<()>>,
-}
+        let (done_sender, done_receiver) = oneshot();
 
-// make available progress
-// transfer started
-// transfer succeeded
-// transfer failed
+        let p2p_rpc = p2p.rpc().try_p2p()?;
+        let store = p2p.rpc().try_store()?;
+        let (root, num_parts) = {
+            let parts = root_dir.encode();
+            tokio::pin!(parts);
+            let mut num_parts = 0;
+            let mut root_cid = None;
+            while let Some(part) = parts.next().await {
+                let (cid, bytes, links) = part?.into_parts();
+                num_parts += 1;
+                root_cid = Some(cid);
+                store.put(cid, bytes, links).await?;
+            }
+            (root_cid.unwrap(), num_parts)
+        };
 
-impl Transfer {
-    pub async fn new(api: P2pApi, root: Cid, num_parts: usize) -> Result<Self> {
-        let peer_id = api.peer_id().await?;
-        let addrs = api.addrs().await?;
-        let ticket = Ticket::new(peer_id, addrs);
-        let mut events = api.subscribe(ticket.topic.clone()).await?;
-        let th = ticket.topic_hash();
-        let (done_sender, done_receiver) = futures::channel::oneshot::channel();
-        let p2p = api.clone();
-        let event_task = tokio::task::spawn(async move {
+        let topic_hash = t.hash();
+        let th = topic_hash.clone();
+
+        // subscribe to the topic, to receive responses
+        let mut subscription = p2p_rpc.gossipsub_subscribe(topic_hash.clone()).await?;
+        let p2p2 = p2p_rpc.clone();
+        let gossip_task_source = tokio::task::spawn(async move {
             let mut current_peer = None;
-            while let Some(Ok(e)) = events.next().await {
-                match e {
+            while let Some(Ok(event)) = subscription.next().await {
+                match event {
                     GossipsubEvent::Subscribed { peer_id, topic } => {
                         if topic == th && current_peer.is_none() {
                             info!("connected to {}", peer_id);
@@ -66,23 +75,22 @@ impl Transfer {
                             let start =
                                 bincode::serialize(&SenderMessage::Start { root, num_parts })
                                     .expect("serialize failure");
-                            p2p.publish(topic.to_string(), start.into()).await.unwrap();
+                            p2p2.gossipsub_publish(topic.clone(), start.into())
+                                .await
+                                .unwrap();
                         }
                     }
                     GossipsubEvent::Message { from, message, .. } => {
-                        println!("received message from {}", from);
                         debug!("received message from {}", from);
                         if let Some(current_peer) = current_peer {
                             if from == current_peer {
                                 match bincode::deserialize(&message.data) {
                                     Ok(ReceiverMessage::FinishOk) => {
-                                        println!("finished transfer");
                                         info!("finished transfer");
                                         done_sender.send(Ok(())).ok();
                                         break;
                                     }
                                     Ok(ReceiverMessage::FinishError(err)) => {
-                                        println!("transfer failed: {}", err);
                                         info!("transfer failed: {}", err);
                                         done_sender.send(Err(anyhow!("{}", err))).ok();
                                         break;
@@ -99,17 +107,68 @@ impl Transfer {
             }
         });
 
-        Ok(Self {
-            api,
+        let (peer_id, addrs) = p2p_rpc
+            .get_listening_addrs()
+            .await
+            .context("getting p2p info")?;
+        info!("Available addrs: {:?}", addrs);
+        let topic_string = topic_hash.to_string();
+
+        let ticket = Ticket {
+            peer_id,
+            addrs,
+            topic: topic_string,
+        };
+
+        Ok(Transfer {
             ticket,
-            event_task,
-            done: done_receiver,
+            gossip_task_source,
+            done_receiver,
+            p2p,
         })
     }
 
+    pub async fn transfer_from_data(
+        self,
+        name: impl Into<String>,
+        data: Bytes,
+    ) -> Result<Transfer> {
+        let name = name.into();
+        // wrap in directory to preserve the name
+        let file = FileBuilder::new()
+            .name(name)
+            .content_bytes(data)
+            .build()
+            .await?;
+        let root_dir = DirectoryBuilder::new().add_file(file);
+
+        self.transfer_from_dir_builder(root_dir).await
+    }
+
+    fn next_id(&self) -> u64 {
+        rand::thread_rng().gen()
+    }
+}
+
+#[derive(Debug)]
+pub struct Transfer {
+    p2p: P2pNode,
+    ticket: Ticket,
+    done_receiver: OneShotReceiver<Result<()>>,
+    gossip_task_source: JoinHandle<()>,
+}
+
+impl Transfer {
+    pub fn ticket(&self) -> &Ticket {
+        &self.ticket
+    }
+
+    /// Waits until the transfer is done.
     pub async fn done(self) -> Result<()> {
-        self.done.await??;
-        self.event_task.await?;
+        self.done_receiver.await??;
+        self.gossip_task_source.await?;
+        self.p2p.close().await?;
+
         Ok(())
     }
 }
