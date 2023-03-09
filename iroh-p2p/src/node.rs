@@ -968,7 +968,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         let res = gossipsub
                             .subscribe(&t)
                             .map(|_| self.network_events())
-                            .map_err(|e| anyhow::Error::new(e));
+                            .map_err(anyhow::Error::new);
                         response_channel
                             .send(res)
                             .map_err(|_| anyhow!("sender dropped"))?;
