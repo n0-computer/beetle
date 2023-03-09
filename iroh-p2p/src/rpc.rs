@@ -423,7 +423,7 @@ impl P2p {
                     match &event {
                         GossipsubEvent::Subscribed { topic, .. } |
                             GossipsubEvent::Unsubscribed {topic, .. } |
-                            GossipsubEvent::Message { topic, .. } => {
+                            GossipsubEvent::Message { message: libp2p::gossipsub::GossipsubMessage{ topic , .. }, .. } => {
                                 if *topic == t {
                                     yield Box::new(GossipsubSubscribeResponse {event});
                                 }

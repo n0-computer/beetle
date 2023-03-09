@@ -690,12 +690,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     message,
                 } = e
                 {
-                    let topic = message.topic.clone();
                     self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Message {
                         from: propagation_source,
                         id: message_id,
                         message,
-                        topic,
                     }));
                 } else if let libp2p::gossipsub::GossipsubEvent::Subscribed { peer_id, topic } = e {
                     self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {

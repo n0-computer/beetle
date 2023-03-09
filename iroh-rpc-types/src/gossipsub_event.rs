@@ -26,8 +26,6 @@ pub enum GossipsubEvent {
         id: MessageId,
         #[serde(with = "GossipsubMessageDef")]
         message: GossipsubMessage,
-        #[serde(with = "TopicHashDef")]
-        topic: TopicHash,
     },
 }
 

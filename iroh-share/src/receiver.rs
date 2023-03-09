@@ -66,7 +66,6 @@ impl Receiver {
                         id: _,
                         from,
                         message,
-                        topic: _,
                     })) => {
                         if from == expected_sender {
                             match bincode::deserialize(&message.data) {
