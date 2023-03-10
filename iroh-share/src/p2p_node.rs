@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cid::Cid;
-use iroh_p2p::{config, Config, Keychain, MemoryStorage, NetworkEvent, Node};
+use iroh_p2p::{config, Config, Keychain, MemoryStorage, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
@@ -13,7 +13,6 @@ use iroh_unixfs::{
 };
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::Receiver;
 use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{error, warn};
 
@@ -130,7 +129,7 @@ impl ContentLoader for Loader {
 }
 
 impl P2pNode {
-    pub async fn new(port: u16, db_path: &Path) -> Result<(Self, Receiver<NetworkEvent>)> {
+    pub async fn new(port: u16, db_path: &Path) -> Result<Self> {
         let rpc_p2p_addr_server = Addr::new_mem();
         let rpc_p2p_addr_client = rpc_p2p_addr_server.clone();
         let rpc_store_addr_server = Addr::new_mem();
@@ -182,7 +181,6 @@ impl P2pNode {
 
         let kc = Keychain::<MemoryStorage>::new();
         let mut p2p = Node::new(config, rpc_p2p_addr_server, kc).await?;
-        let events = p2p.network_events();
 
         let p2p_task = tokio::task::spawn(async move {
             if let Err(err) = p2p.run().await {
@@ -196,15 +194,12 @@ impl P2pNode {
                 .unwrap()
         });
 
-        Ok((
-            Self {
-                p2p_task,
-                store_task,
-                rpc,
-                resolver,
-            },
-            events,
-        ))
+        Ok(Self {
+            p2p_task,
+            store_task,
+            rpc,
+            resolver,
+        })
     }
 
     pub fn rpc(&self) -> &Client {

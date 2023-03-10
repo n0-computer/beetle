@@ -10,7 +10,6 @@ use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::p2p::P2pAddr;
 use libp2p::core::Multiaddr;
-use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{Event as IdentifyEvent, Info as IdentifyInfo};
 use libp2p::identity::Keypair;
@@ -38,6 +37,7 @@ use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
 use crate::rpc::{P2p, ProviderRequestKey};
 use crate::swarm::build_swarm;
+use crate::GossipsubEvent;
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
@@ -51,23 +51,6 @@ pub enum NetworkEvent {
     PeerDisconnected(PeerId),
     Gossipsub(GossipsubEvent),
     CancelLookupQuery(PeerId),
-}
-
-#[derive(Debug, Clone)]
-pub enum GossipsubEvent {
-    Subscribed {
-        peer_id: PeerId,
-        topic: TopicHash,
-    },
-    Unsubscribed {
-        peer_id: PeerId,
-        topic: TopicHash,
-    },
-    Message {
-        from: PeerId,
-        id: MessageId,
-        message: GossipsubMessage,
-    },
 }
 
 pub struct Node<KeyStorage: Storage> {
@@ -978,7 +961,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             .map_err(|_| anyhow!("sender dropped"))?;
                     }
                     rpc::GossipsubMessage::Subscribe(response_channel, topic_hash) => {
-                        let res = gossipsub.subscribe(&IdentTopic::new(topic_hash.into_string()));
+                        let t = IdentTopic::new(topic_hash.into_string());
+                        let res = gossipsub
+                            .subscribe(&t)
+                            .map(|_| self.network_events())
+                            .map_err(anyhow::Error::new);
                         response_channel
                             .send(res)
                             .map_err(|_| anyhow!("sender dropped"))?;
@@ -1089,12 +1076,13 @@ mod tests {
     use crate::keys::{Keypair, MemoryStorage};
 
     use bytes::Bytes;
-    use futures::TryStreamExt;
+    use futures::{future, TryStreamExt};
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
     use ssh_key::private::Ed25519Keypair;
 
     use libp2p::{identity::Keypair as Libp2pKeypair, kad::record::Key};
+    use tokio::task;
 
     use super::*;
     use anyhow::Result;
@@ -1489,19 +1477,23 @@ mod tests {
         assert_eq!(test_runner_b.peer_id, got_peer.0);
 
         // create topic
-        let topic = TopicHash::from_raw("test_topic");
+        let topic = libp2p::gossipsub::TopicHash::from_raw("test_topic");
         // subscribe both to same topic
-        test_runner_a
+        let mut subscription_a = test_runner_a
             .client
             .gossipsub_subscribe(topic.clone())
             .await?;
-        test_runner_b
+        let subscription_b = test_runner_b
             .client
             .gossipsub_subscribe(topic.clone())
             .await?;
 
-        match test_runner_a.network_events.recv().await {
-            Some(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
+        // Spawn a task to read all messages from b, but ignore them.
+        // This ensures the subscription request is actually processed.
+        task::spawn(subscription_b.for_each(|_| future::ready(())));
+
+        match subscription_a.next().await {
+            Some(Ok(GossipsubEvent::Subscribed {
                 peer_id,
                 topic: subscribed_topic,
             })) => {
@@ -1509,10 +1501,13 @@ mod tests {
                 assert_eq!(topic, subscribed_topic);
             }
             Some(n) => {
-                anyhow::bail!("unexpected network event: {:?}", n);
+                anyhow::bail!(
+                    "unexpected network event, expecting a GossipsubEvent::Subscribed, got: {:?}",
+                    n
+                );
             }
             None => {
-                anyhow::bail!("expected NetworkEvent::Gossipsub(Subscribed), received no event");
+                anyhow::bail!("expected GossipsubEvent::Subscribed, received no event");
             }
         };
 
@@ -1541,18 +1536,24 @@ mod tests {
             .gossipsub_publish(topic.clone(), msg.clone())
             .await?;
 
-        match test_runner_a.network_events.recv().await {
-            Some(NetworkEvent::Gossipsub(GossipsubEvent::Message { from, message, .. })) => {
+        match subscription_a.next().await {
+            Some(Ok(GossipsubEvent::Message { from, message, .. })) => {
                 assert_eq!(test_runner_b.peer_id, from);
                 assert_eq!(topic, message.topic);
                 assert_eq!(test_runner_b.peer_id, message.source.unwrap());
                 assert_eq!(msg.to_vec(), message.data);
             }
-            Some(n) => {
-                anyhow::bail!("unexpected network event: {:?}", n);
+            Some(Ok(n)) => {
+                anyhow::bail!(
+                    "unexpected network event, expecting a GossipsubEvent::Message, got: {:?}",
+                    n
+                );
+            }
+            Some(Err(e)) => {
+                anyhow::bail!("unexpected network error: {:?}", e);
             }
             None => {
-                anyhow::bail!("expected NetworkEvent::Gossipsub(Message), received no event");
+                anyhow::bail!("expected GossipsubEvent::Message, received no event");
             }
         };
 
@@ -1560,16 +1561,23 @@ mod tests {
             .client
             .gossipsub_unsubscribe(topic.clone())
             .await?;
-        match test_runner_a.network_events.recv().await {
-            Some(NetworkEvent::Gossipsub(GossipsubEvent::Unsubscribed {
+
+        match subscription_a.next().await {
+            Some(Ok(GossipsubEvent::Unsubscribed {
                 peer_id,
                 topic: unsubscribe_topic,
             })) => {
                 assert_eq!(test_runner_b.peer_id, peer_id);
                 assert_eq!(topic, unsubscribe_topic);
             }
-            Some(n) => {
-                anyhow::bail!("unexpected network event: {:?}", n);
+            Some(Ok(n)) => {
+                anyhow::bail!(
+                    "unexpected network event, expecting a GossipsubEvent::Unsubscribed, got: {:?}",
+                    n
+                );
+            }
+            Some(Err(e)) => {
+                anyhow::bail!("unexpected network error: {:?}", e);
             }
             None => {
                 anyhow::bail!("expected NetworkEvent::Gossipsub(Unsubscribed), received no event");

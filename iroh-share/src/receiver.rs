@@ -3,15 +3,14 @@ use futures::{
     channel::{oneshot::channel as oneshot, oneshot::Receiver as OneShotReceiver},
     Stream, StreamExt,
 };
-use iroh_p2p::NetworkEvent;
 use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
+use iroh_rpc_types::GossipsubEvent;
 use iroh_unixfs::Link;
-use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
-use libp2p::PeerId;
+use libp2p::gossipsub::TopicHash;
 use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::SenderMessage;
 use crate::{
@@ -22,50 +21,26 @@ use crate::{
 #[derive(Debug)]
 pub struct Receiver {
     p2p: P2pNode,
-    gossip_messages: ChannelReceiver<(MessageId, PeerId, GossipsubMessage)>,
-    gossip_task: JoinHandle<()>,
 }
 
 impl Receiver {
     pub async fn new(port: u16, db_path: &std::path::Path) -> Result<Self> {
-        let (p2p, mut events) = P2pNode::new(port, db_path).await?;
-        let (s, r) = channel(1024);
+        let p2p = P2pNode::new(port, db_path).await?;
 
-        let gossip_task = tokio::task::spawn(async move {
-            while let Some(event) = events.recv().await {
-                if let NetworkEvent::Gossipsub(iroh_p2p::GossipsubEvent::Message {
-                    from,
-                    id,
-                    message,
-                }) = event
-                {
-                    s.try_send((id, from, message)).ok();
-                }
-            }
-        });
-
-        Ok(Receiver {
-            p2p,
-            gossip_messages: r,
-            gossip_task,
-        })
+        Ok(Receiver { p2p })
     }
 
     pub async fn transfer_from_ticket(self, ticket: &Ticket) -> Result<Transfer> {
         // Connect to the sender
         info!("connecting");
-        let Receiver {
-            p2p,
-            mut gossip_messages,
-            gossip_task,
-        } = self;
+        let Receiver { p2p } = self;
         let p2p_rpc = p2p.rpc().try_p2p()?;
         p2p_rpc
             .connect(ticket.peer_id, ticket.addrs.clone())
             .await?;
         p2p_rpc.gossipsub_add_explicit_peer(ticket.peer_id).await?;
         let topic = TopicHash::from_raw(&ticket.topic);
-        p2p_rpc.gossipsub_subscribe(topic.clone()).await?;
+        let mut subscription = p2p_rpc.gossipsub_subscribe(topic.clone()).await?;
 
         let expected_sender = ticket.peer_id;
         let resolver = p2p.resolver().clone();
@@ -85,73 +60,92 @@ impl Receiver {
         let gossip_task_source = tokio::task::spawn(async move {
             let mut data_sender = Some(data_sender);
 
-            while let Some((_id, from, message)) = gossip_messages.recv().await {
-                if from == expected_sender {
-                    match bincode::deserialize(&message.data) {
-                        Ok(SenderMessage::Start { root, num_parts }) => {
-                            let results = resolver.resolve_recursive(Path::from_cid(root));
-                            tokio::pin!(results);
-                            // root is the first
-                            let mut index = 1;
-                            let mut has_err = None;
-                            while let Some(res) = results.next().await {
-                                let msg = match &res {
-                                    Ok(_out) => Ok(ProgressEvent::Piece {
-                                        index,
-                                        total: num_parts,
-                                    }),
-                                    Err(err) => {
-                                        has_err = Some(err.to_string());
-                                        Err(err.to_string())
+            loop {
+                match subscription.next().await {
+                    Some(Ok(GossipsubEvent::Message {
+                        id: _,
+                        from,
+                        message,
+                    })) => {
+                        if from == expected_sender {
+                            match bincode::deserialize(&message.data) {
+                                Ok(SenderMessage::Start { root, num_parts }) => {
+                                    let results = resolver.resolve_recursive(Path::from_cid(root));
+                                    tokio::pin!(results);
+                                    // root is the first
+                                    let mut index = 1;
+                                    let mut has_err = None;
+                                    while let Some(res) = results.next().await {
+                                        let msg = match &res {
+                                            Ok(_out) => Ok(ProgressEvent::Piece {
+                                                index,
+                                                total: num_parts,
+                                            }),
+                                            Err(err) => {
+                                                has_err = Some(err.to_string());
+                                                Err(err.to_string())
+                                            }
+                                        };
+                                        debug!("progress {}/{}", index, num_parts);
+                                        progress_sender.send(msg).await.unwrap();
+
+                                        if let Some(data_sender) = data_sender.take() {
+                                            data_sender.send(res).ok();
+                                        }
+
+                                        // If there was an error abort.
+                                        if has_err.is_some() {
+                                            break;
+                                        }
+                                        index += 1;
                                     }
-                                };
-                                debug!("progress {}/{}", index, num_parts);
-                                progress_sender.send(msg).await.unwrap();
+                                    info!("transfer completed");
+                                    drop(progress_sender);
 
-                                if let Some(data_sender) = data_sender.take() {
-                                    data_sender.send(res).ok();
+                                    // TODO: send finish message or error
+                                    let msg = if let Some(error) = has_err.take() {
+                                        ReceiverMessage::FinishError(error)
+                                    } else {
+                                        ReceiverMessage::FinishOk
+                                    };
+                                    rpc.try_p2p()
+                                        .expect("missing p2p rpc")
+                                        .gossipsub_publish(
+                                            topic,
+                                            bincode::serialize(&msg)
+                                                .expect("failed to serialize")
+                                                .into(),
+                                        )
+                                        .await
+                                        .ok();
                                 }
-
-                                // If there was an error abort.
-                                if has_err.is_some() {
-                                    break;
+                                Err(err) => {
+                                    warn!("got unexpected message from {}: {:?}", from, err);
                                 }
-                                index += 1;
                             }
-                            info!("transfer completed");
-                            drop(progress_sender);
-
-                            // TODO: send finish message or error
-                            let msg = if let Some(error) = has_err.take() {
-                                ReceiverMessage::FinishError(error)
-                            } else {
-                                ReceiverMessage::FinishOk
-                            };
-                            rpc.try_p2p()
-                                .expect("missing p2p rpc")
-                                .gossipsub_publish(
-                                    topic,
-                                    bincode::serialize(&msg)
-                                        .expect("failed to serialize")
-                                        .into(),
-                                )
-                                .await
-                                .ok();
-                        }
-                        Err(err) => {
-                            warn!("got unexpected message from {}: {:?}", from, err);
+                            // we only receive a single iteration
+                            break;
+                        } else {
+                            warn!("got message from unexpected sender: {:?}", from);
                         }
                     }
-                    // we only receive a single iteration
-                    break;
-                } else {
-                    warn!("got message from unexpected sender: {:?}", from);
+                    // Ignore the subscribed messasges
+                    Some(Ok(GossipsubEvent::Subscribed { .. })) => {}
+                    // Ignore the unsubscribed messasges
+                    Some(Ok(GossipsubEvent::Unsubscribed { .. })) => {}
+                    Some(Err(e)) => {
+                        error!("got unexpected error: {:?}", e);
+                        break;
+                    }
+                    None => {
+                        error!("expected subscription message got none");
+                        break;
+                    }
                 }
             }
         });
 
         Ok(Transfer {
-            gossip_task,
             gossip_task_source,
             p2p,
             data_receiver: Some(data_receiver),
@@ -168,7 +162,6 @@ pub enum ProgressEvent {
 #[derive(Debug)]
 pub struct Transfer {
     p2p: P2pNode,
-    gossip_task: JoinHandle<()>,
     gossip_task_source: JoinHandle<()>,
     data_receiver: Option<OneShotReceiver<Result<Out>>>,
     progress_receiver: Option<ChannelReceiver<std::result::Result<ProgressEvent, String>>>,
@@ -205,7 +198,6 @@ impl Transfer {
 
     /// Finish and finalize the transfer.
     pub async fn finish(self) -> Result<()> {
-        self.gossip_task.abort();
         self.gossip_task_source.await?;
         self.p2p.close().await?;
 

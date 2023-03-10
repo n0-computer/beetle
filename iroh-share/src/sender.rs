@@ -4,11 +4,10 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures::channel::oneshot::{channel as oneshot, Receiver as OneShotReceiver};
 use futures::StreamExt;
-use iroh_p2p::{GossipsubEvent, NetworkEvent};
+use iroh_rpc_types::GossipsubEvent;
 use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
 use libp2p::gossipsub::Sha256Topic;
 use rand::Rng;
-use tokio::sync::mpsc::{channel, Receiver};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
@@ -21,29 +20,13 @@ use crate::{
 #[derive(Debug)]
 pub struct Sender {
     p2p: P2pNode,
-    gossip_events: Receiver<GossipsubEvent>,
-    gossip_task: JoinHandle<()>,
 }
 
 impl Sender {
     pub async fn new(port: u16, db_path: &Path) -> Result<Self> {
-        let (p2p, mut events) = P2pNode::new(port, db_path).await?;
-        let (s, r) = channel(1024);
+        let p2p = P2pNode::new(port, db_path).await?;
 
-        let gossip_task = tokio::task::spawn(async move {
-            while let Some(event) = events.recv().await {
-                if let NetworkEvent::Gossipsub(e) = event {
-                    // drop events if they are not processed
-                    s.try_send(e).ok();
-                }
-            }
-        });
-
-        Ok(Sender {
-            p2p,
-            gossip_events: r,
-            gossip_task,
-        })
+        Ok(Sender { p2p })
     }
 
     pub async fn transfer_from_dir_builder(
@@ -51,11 +34,7 @@ impl Sender {
         dir_builder: DirectoryBuilder,
     ) -> Result<Transfer> {
         let id = self.next_id();
-        let Sender {
-            p2p,
-            mut gossip_events,
-            gossip_task,
-        } = self;
+        let Sender { p2p } = self;
 
         let t = Sha256Topic::new(format!("iroh-share-{id}"));
         let root_dir = dir_builder.build().await?;
@@ -82,11 +61,11 @@ impl Sender {
         let th = topic_hash.clone();
 
         // subscribe to the topic, to receive responses
-        p2p_rpc.gossipsub_subscribe(topic_hash.clone()).await?;
+        let mut subscription = p2p_rpc.gossipsub_subscribe(topic_hash.clone()).await?;
         let p2p2 = p2p_rpc.clone();
         let gossip_task_source = tokio::task::spawn(async move {
             let mut current_peer = None;
-            while let Some(event) = gossip_events.recv().await {
+            while let Some(Ok(event)) = subscription.next().await {
                 match event {
                     GossipsubEvent::Subscribed { peer_id, topic } => {
                         if topic == th && current_peer.is_none() {
@@ -145,7 +124,6 @@ impl Sender {
             ticket,
             gossip_task_source,
             done_receiver,
-            gossip_task,
             p2p,
         })
     }
@@ -177,7 +155,6 @@ pub struct Transfer {
     p2p: P2pNode,
     ticket: Ticket,
     done_receiver: OneShotReceiver<Result<()>>,
-    gossip_task: JoinHandle<()>,
     gossip_task_source: JoinHandle<()>,
 }
 
@@ -189,7 +166,6 @@ impl Transfer {
     /// Waits until the transfer is done.
     pub async fn done(self) -> Result<()> {
         self.done_receiver.await??;
-        self.gossip_task.abort();
         self.gossip_task_source.await?;
         self.p2p.close().await?;
 

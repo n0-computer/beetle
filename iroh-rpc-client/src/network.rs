@@ -3,7 +3,7 @@ use async_stream::stream;
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
-use iroh_rpc_types::{p2p::*, VersionRequest, WatchRequest};
+use iroh_rpc_types::{p2p::*, GossipsubEvent, VersionRequest, WatchRequest};
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};
@@ -243,12 +243,21 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_subscribe(&self, topic: TopicHash) -> Result<bool> {
-        let req = GossipsubSubscribeRequest {
-            topic_hash: topic.to_string(),
-        };
-        let res = self.client.rpc(req).await??;
-        Ok(res.was_subscribed)
+    pub async fn gossipsub_subscribe(
+        &self,
+        topic: TopicHash,
+    ) -> Result<impl Stream<Item = Result<GossipsubEvent>>> {
+        let res = self
+            .client
+            .server_streaming(GossipsubSubscribeRequest {
+                topic_hash: topic.to_string(),
+            })
+            .await?;
+        let events = res.map(|e| {
+            let e = e?.event;
+            Ok(e)
+        });
+        Ok(events)
     }
 
     #[tracing::instrument(skip(self))]
