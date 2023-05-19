@@ -52,15 +52,15 @@ Use `cargo` commands to build and run the various Iroh binaries.
 For example:
 
 ```shell
-# run each command in a different terminal to simulate running iroh as
+# run each command in a different terminal to simulate running beetle as
 # microservices on different boxes:
-$ cargo run -p iroh-p2p
-$ cargo run -p iroh-gateway
-$ cargo run -p iroh-store
-$ cargo run -p iroh -- status --watch
+$ cargo run -p beetle-p2p
+$ cargo run -p beetle-gateway
+$ cargo run -p beetle-store
+$ cargo run -p beetle -- status --watch
 ```
 
-If you want to use the `iroh` binary to start and stop the services, you can
+If you want to use the `beetle` binary to start and stop the services, you can
 use `xtask` to move previously built binaries to the correct bin:
 
 ```shell
@@ -94,7 +94,7 @@ cargo clippy --workspace --all-features --all-targets && cargo test --workspace 
 
 ## <a name="dependecies"></a> Dependencies
 
-Any crate added to iroh will need to use a license compatible with ours.  Any PR that introduces a new crate will require additional review time to audit the crate being introduced, including rationale on why you chose *this* crate, and what alternatives you considered willl speed up the review process.
+Any crate added to beetle will need to use a license compatible with ours.  Any PR that introduces a new crate will require additional review time to audit the crate being introduced, including rationale on why you chose *this* crate, and what alternatives you considered willl speed up the review process.
 
 Crate lists in `Cargo.toml` files must be kept alphabetically sorted.
 
@@ -102,13 +102,13 @@ Crate lists in `Cargo.toml` files must be kept alphabetically sorted.
 
 The tests must pass and you must get an approval from someone on the Iroh team before you can merge your PR.
 
-Depending on your permissions in the `iroh` repo, you may not have the the ability to "request a review". Instead, please tag your selected reviewers in the PR itself (using the `@`) and specify that you would like them to review. If you are a member of our discord community, you can and should ping your reviewer(s) there as well.
+Depending on your permissions in the `beetle` repo, you may not have the the ability to "request a review". Instead, please tag your selected reviewers in the PR itself (using the `@`) and specify that you would like them to review. If you are a member of our discord community, you can and should ping your reviewer(s) there as well.
 
-If you don't know who to tag for review, here are some good guidelines. For any markdown documentations changes, tag `ramfox` or `b5`. If your PR solves an issue that someone else created, tag that person in review. If it's an issue you have created, tag team members who have been discussing the issue. Otherwise, create the PR and note that you aren't sure who to tag! Someone will drop in to give you guidance. If you are apart of our discord community, ask who should be tagged in the `iroh` channel.
+If you don't know who to tag for review, here are some good guidelines. For any markdown documentations changes, tag `ramfox` or `b5`. If your PR solves an issue that someone else created, tag that person in review. If it's an issue you have created, tag team members who have been discussing the issue. Otherwise, create the PR and note that you aren't sure who to tag! Someone will drop in to give you guidance. If you are apart of our discord community, ask who should be tagged in the `beetle` channel.
 
 ### A note about our current CI testing set up
 
-The MacOS testing infrastructure currently does not work on forked branches of `iroh`. If you are working on a forked branch, you will notice that the MacOS tests on your PRs will always fail (because they will not run). This is the only case where you may have a "failing" test and still merge your PR.
+The MacOS testing infrastructure currently does not work on forked branches of `beetle`. If you are working on a forked branch, you will notice that the MacOS tests on your PRs will always fail (because they will not run). This is the only case where you may have a "failing" test and still merge your PR.
 
 ### Merging
 
@@ -163,7 +163,7 @@ Must be one of the following:
 
 ### Scope
 
-The scope could be anything specifying place of the commit change. For example, if I am refactoring something in the `iroh` package, I may start my commit with "refactor(iroh)".
+The scope could be anything specifying place of the commit change. For example, if I am refactoring something in the `beetle` package, I may start my commit with "refactor(beetle)".
 
 You can use `*` when the change affects more than a single scope.
 
@@ -192,7 +192,7 @@ A detailed explanation can be found in this [document][commit-message-format].
 
 [closing-issues]: https://help.github.com/articles/closing-issues-via-commit-messages/
 [commit-message-format]: https://docs.google.com/document/d/1QrDFcIiPjSLDn3EL15IJygNPiHORgU1_OOAqWjiDU5Y/edit#
-[github]: https://github.com/n0-computer/iroh
+[github]: https://github.com/n0-computer/beetle
 [git-revert]: https://git-scm.com/docs/git-revert
 [git-setup]: https://help.github.com/articles/set-up-git
 [git-hook]: https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks

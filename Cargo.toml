@@ -2,23 +2,23 @@
 members = [
   "examples/embed",
   "examples/importer",
-  "iroh",
-  "iroh-api",
-  "iroh-bitswap",
-  "iroh-car",
-  "iroh-embed",
-  "iroh-gateway",
-  "iroh-localops",
-  "iroh-metrics",
-  "iroh-one",
-  "iroh-p2p",
-  "iroh-resolver",
-  "iroh-rpc-client",
-  "iroh-rpc-types",
-  "iroh-share",
-  "iroh-unixfs",
-  "iroh-store",
-  "iroh-util",
+  "beetle",
+  "beetle-api",
+  "beetle-bitswap",
+  "beetle-car",
+  "beetle-embed",
+  "beetle-gateway",
+  "beetle-localops",
+  "beetle-metrics",
+  "beetle-one",
+  "beetle-p2p",
+  "beetle-resolver",
+  "beetle-rpc-client",
+  "beetle-rpc-types",
+  "beetle-share",
+  "beetle-unixfs",
+  "beetle-store",
+  "beetle-util",
   "xtask",
 ]
 # even if all crates are set to edition 2021, we still need to force the
@@ -31,7 +31,7 @@ version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0/MIT"
 rust-version = "1.65"
-repository = "https://github.com/n0-computer/iroh"
+repository = "https://github.com/n0-computer/beetle"
 
 [workspace.dependencies]
 # We prefer to place all dependencies for our workspace crates here.
@@ -90,22 +90,22 @@ hyper = "0.14.23"
 ignore = "0.4.18"
 indicatif = "0.17.1"
 integer-encoding = "3.0"
-iroh = { version = "0.2.0", path = "./iroh" }
-iroh-api = { version = "0.2.0", path = "./iroh-api" }
-iroh-bitswap = { version = "0.2.0", path = "./iroh-bitswap" }
-iroh-car = { version = "0.2.0", path = "./iroh-car" }
-iroh-embed = { version = "0.2.0", path = "./iroh-embed" }
-iroh-gateway = { version = "0.2.0", path = "./iroh-gateway" }
-iroh-localops = { version = "0.2.0", path = "./iroh-localops" }
-iroh-metrics = { version = "0.2.0", path = "./iroh-metrics" }
-iroh-one = { version = "0.2.0", path = "./iroh-one" }
-iroh-p2p = { version = "0.2.0", path = "./iroh-p2p" }
-iroh-resolver = { version = "0.2.0", path = "./iroh-resolver" }
-iroh-rpc-client = { version = "0.2.0", path = "./iroh-rpc-client" }
-iroh-rpc-types = { version = "0.2.0", path = "./iroh-rpc-types" }
-iroh-store = { version = "0.2.0", path = "./iroh-store" }
-iroh-unixfs = { version = "0.2.0", path = "./iroh-unixfs" }
-iroh-util = { version = "0.2.0", path = "./iroh-util" }
+beetle = { version = "0.2.0", path = "./beetle" }
+beetle-api = { version = "0.2.0", path = "./beetle-api" }
+beetle-bitswap = { version = "0.2.0", path = "./beetle-bitswap" }
+beetle-car = { version = "0.2.0", path = "./beetle-car" }
+beetle-embed = { version = "0.2.0", path = "./beetle-embed" }
+beetle-gateway = { version = "0.2.0", path = "./beetle-gateway" }
+beetle-localops = { version = "0.2.0", path = "./beetle-localops" }
+beetle-metrics = { version = "0.2.0", path = "./beetle-metrics" }
+beetle-one = { version = "0.2.0", path = "./beetle-one" }
+beetle-p2p = { version = "0.2.0", path = "./beetle-p2p" }
+beetle-resolver = { version = "0.2.0", path = "./beetle-resolver" }
+beetle-rpc-client = { version = "0.2.0", path = "./beetle-rpc-client" }
+beetle-rpc-types = { version = "0.2.0", path = "./beetle-rpc-types" }
+beetle-store = { version = "0.2.0", path = "./beetle-store" }
+beetle-unixfs = { version = "0.2.0", path = "./beetle-unixfs" }
+beetle-util = { version = "0.2.0", path = "./beetle-util" }
 keyed_priority_queue = "0.4.1"
 lazy_static = "1.4"
 libipld = "0.15"

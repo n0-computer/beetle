@@ -73,7 +73,7 @@ the effort we can spend fixing issues and adding new features, by not reporting 
 ## <a name="submit-pr"></a> Pull Request Submission Guidelines
 Before you submit your pull request consider the following guidelines:
 
-* Search [GitHub](https://github.com/n0-computer/iroh/pulls) for an open or closed Pull Request
+* Search [GitHub](https://github.com/n0-computer/beetle/pulls) for an open or closed Pull Request
   that relates to your submission. You don't want to duplicate effort.
 * Create the [development environment][developers.setup]
 * Make your changes in a new git branch:
@@ -99,7 +99,7 @@ Before you submit your pull request consider the following guidelines:
     git push origin my-fix-branch
     ```
 
-* In GitHub, send a pull request to ` iroh:main`. 
+* In GitHub, send a pull request to ` beetle:main`. 
 * Follow our [Pull Request Guidelines](developers.prs) to understand who to tag for review and how best to merge your work.
 
 * If we suggest changes, then:
@@ -139,13 +139,13 @@ from the main (upstream) repository:
     git pull --ff upstream main 
     ```
 
-[coc]: https://github.com/n0-computer/iroh/blob/main/code_of_conduct.md
+[coc]: https://github.com/n0-computer/beetle/blob/main/code_of_conduct.md
 [developers]: DEVELOPERS.md
 [developers.setup]: DEVELOPERS.md#setup
 [developers.commits]: DEVELOPERS.md#commits
 [developers.rules]: DEVELOPERS.md#rules
-[github-issues]: https://github.com/n0-computer/iroh/issues
-[github]: https://github.com/n0-computer/iroh
+[github-issues]: https://github.com/n0-computer/beetle/issues
+[github]: https://github.com/n0-computer/beetle
 [jsfiddle]: http://jsfiddle.net/
 [plunker]: http://plnkr.co/edit
 

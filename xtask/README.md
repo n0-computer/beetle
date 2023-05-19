@@ -1,4 +1,4 @@
-# iroh xtasks
+# beetle xtasks
 
 This crate contains automation tasks similar to `make` or `npm run` commands in other languages, using the [cargo xtask pattern](https://github.com/matklad/cargo-xtask).
 

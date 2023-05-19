@@ -1,7 +1,7 @@
 # Dockerfile for CircleCI
 # build with
-# `docker build -t dignifiedquire/iroh-ci:latest -f ./Dockerfile-ci .`
-# rebuild: `docker build --pull --no-cache -t dignifiedquire/iroh-ci:latest -f ./Dockerfile-ci .`
+# `docker build -t dignifiedquire/beetle-ci:latest -f ./Dockerfile-ci .`
+# rebuild: `docker build --pull --no-cache -t dignifiedquire/beetle-ci:latest -f ./Dockerfile-ci .`
 
 FROM cimg/rust:1.62.0
 

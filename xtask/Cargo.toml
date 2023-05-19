@@ -11,4 +11,4 @@ clap = { workspace = true, features = ["derive"] }
 clap_mangen.workspace = true
 dirs-next.workspace = true
 xtaskops.workspace = true
-iroh.workspace = true
+beetle.workspace = true

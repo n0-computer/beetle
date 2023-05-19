@@ -1,0 +1,40 @@
+[package]
+name = "beetle-api"
+readme = "README.md"
+description = "Rust API for Iroh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+cid.workspace = true
+config.workspace = true
+futures.workspace = true
+beetle-metrics.workspace = true
+beetle-resolver.workspace = true
+beetle-rpc-client.workspace = true
+beetle-rpc-types.workspace = true
+beetle-unixfs.workspace = true
+beetle-util.workspace = true
+libp2p.workspace = true
+relative-path.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["async_tokio"] }
+beetle-rpc-types.workspace = true
+beetle-store.workspace = true
+tempfile.workspace = true
+
+[[bench]]
+name = "add"
+harness = false

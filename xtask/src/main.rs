@@ -9,7 +9,7 @@ use std::{
 
 #[derive(Debug, Parser)]
 #[command(name = "xtasks")]
-#[command(about = "iroh automation tasks", long_about = None)]
+#[command(about = "beetle automation tasks", long_about = None)]
 #[command(arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
@@ -43,7 +43,7 @@ enum Commands {
         /// Publish all images, overrides images args
         #[clap(short, long)]
         all: bool,
-        /// Set of services to publish. Any of {iroh-store,iroh-p2p,iroh-gateway,iroh-one}
+        /// Set of services to publish. Any of {beetle-store,beetle-p2p,beetle-gateway,beetle-one}
         images: Vec<String>,
     },
     #[command(
@@ -53,7 +53,7 @@ enum Commands {
         /// Publish all images, overrides images args
         #[clap(short, long)]
         all: bool,
-        /// Set of services to publish. Any of {iroh-store,iroh-p2p,iroh-gateway,iroh-one}
+        /// Set of services to publish. Any of {beetle-store,beetle-p2p,beetle-gateway,beetle-one}
         images: Vec<String>,
         #[clap(short, long, default_value_t = String::from("linux/arm64/v8,linux/amd64"))]
         platforms: String,
@@ -108,7 +108,13 @@ fn dev_install(build: bool) -> Result<()> {
     if build {
         dist().unwrap();
     }
-    let bins = ["iroh", "iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"];
+    let bins = [
+        "beetle",
+        "beetle-one",
+        "beetle-gateway",
+        "beetle-p2p",
+        "beetle-store",
+    ];
     let home = dirs_next::home_dir().unwrap();
     for bin in bins {
         let from = project_root().join(format!("target/release/{bin}"));
@@ -141,18 +147,18 @@ fn dist_binaries() -> Result<()> {
 
 fn dist_manpage() -> Result<()> {
     let outdir = dist_dir();
-    let f = fs::File::create(outdir.join("iroh.1"))?;
+    let f = fs::File::create(outdir.join("beetle.1"))?;
     let mut buf = io::BufWriter::new(f);
-    let cmd = iroh::run::Cli::command();
+    let cmd = beetle::run::Cli::command();
     let man = clap_mangen::Man::new(cmd.clone());
     man.render(&mut buf)?;
 
-    write_subcommand_man_files("iroh", &cmd, &outdir)
+    write_subcommand_man_files("beetle", &cmd, &outdir)
 }
 
 fn write_subcommand_man_files(prefix: &str, cmd: &clap::Command, outdir: &PathBuf) -> Result<()> {
     for subcommand in cmd.get_subcommands() {
-        let subcommand_name = format!("iroh{}", subcommand.get_name());
+        let subcommand_name = format!("beetle{}", subcommand.get_name());
         let f = fs::File::create(outdir.join(format!("{}{}", &subcommand_name, ".1")))?;
         let mut buf = io::BufWriter::new(f);
         let man = clap_mangen::Man::new(subcommand.clone());
@@ -183,10 +189,10 @@ fn dist_dir() -> PathBuf {
 fn docker_images(all: bool, build_images: Vec<String>) -> Vec<String> {
     if all {
         return vec![
-            String::from("iroh-one"),
-            String::from("iroh-store"),
-            String::from("iroh-p2p"),
-            String::from("iroh-gateway"),
+            String::from("beetle-one"),
+            String::from("beetle-store"),
+            String::from("beetle-p2p"),
+            String::from("beetle-gateway"),
         ];
     }
     build_images

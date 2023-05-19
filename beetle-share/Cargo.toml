@@ -1,0 +1,38 @@
+[package]
+name = "beetle-share"
+authors = ["dignifiedquire <me@dignifiedquire.com>"]
+description = "Sharing files with beetle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+bincode.workspace = true
+bytes.workspace = true
+cid = { workspace = true, features = ["serde-codec"] }
+clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
+beetle-metrics.workspace = true
+beetle-p2p.workspace = true
+beetle-resolver.workspace = true
+beetle-rpc-client.workspace = true
+beetle-rpc-types.workspace = true
+beetle-store.workspace = true
+beetle-unixfs.workspace = true
+beetle-util.workspace = true
+libp2p = { workspace = true, features = ["gossipsub"] }
+multibase.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

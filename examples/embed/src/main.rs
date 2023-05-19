@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
+use beetle_api::{IpfsPath, OutType};
+use beetle_embed::{IrohBuilder, Libp2pConfig, P2pService, RocksStoreService};
 use futures_util::StreamExt;
-use iroh_api::{IpfsPath, OutType};
-use iroh_embed::{IrohBuilder, Libp2pConfig, P2pService, RocksStoreService};
 use testdir::testdir;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -9,7 +9,7 @@ async fn main() -> Result<()> {
     let dir = testdir!();
     println!("Using directory: {}", dir.display());
 
-    println!("Starting iroh system...");
+    println!("Starting beetle system...");
     let store = RocksStoreService::new(dir.join("store")).await?;
 
     let mut p2p_config = Libp2pConfig::default();
@@ -20,13 +20,13 @@ async fn main() -> Result<()> {
     let p2p = P2pService::new(p2p_config, dir, store.addr()).await?;
 
     // Note by default this is configured with an indexer, but not with http resolvers.
-    let iroh = IrohBuilder::new().store(store).p2p(p2p).build().await?;
+    let beetle = IrohBuilder::new().store(store).p2p(p2p).build().await?;
     println!("done");
 
     let quick_start: IpfsPath =
         "/ipfs/QmQPeNsJPyVWPFDVHb77w8G42Fvo15z4bG2X8D2GhfbSXc/quick-start".parse()?;
     println!("Fetching quick start: {quick_start}");
-    let mut stream = iroh.api().get(&quick_start)?;
+    let mut stream = beetle.api().get(&quick_start)?;
 
     // We only expect a single item here.
     while let Some(item) = stream.next().await {
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     }
 
     // Stop the system gracefully.
-    iroh.stop().await?;
+    beetle.stop().await?;
 
     Ok(())
 }
