@@ -88,7 +88,7 @@ fn stream_balanced_tree(
         tokio::pin!(in_stream);
 
         while let Some(chunk) = in_stream.next().await {
-            let ((block, link_info)) = chunk?;
+            let (block, link_info) = chunk?;
             let tree_len = tree.len();
 
             // check if the leaf node of the tree is full

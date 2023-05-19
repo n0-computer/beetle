@@ -16,9 +16,9 @@ use beetle_metrics::record;
 use beetle_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
-use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
 use libp2p::swarm::dial_opts::DialOpts;
+use libp2p::swarm::ConnectionId;
 use libp2p::swarm::{
     CloseConnection, DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction,
     NotifyHandler, PollParameters,
@@ -410,101 +410,153 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         Default::default()
     }
 
-    fn inject_connection_established(
+    // fn inject_connection_established(
+    //     &mut self,
+    //     peer_id: &PeerId,
+    //     connection: &ConnectionId,
+    //     _endpoint: &ConnectedPoint,
+    //     _failed_addresses: Option<&Vec<Multiaddr>>,
+    //     other_established: usize,
+    // ) {
+    //     trace!("connection established {} ({})", peer_id, other_established);
+    //     self.set_peer_state(peer_id, PeerState::Connected(*connection));
+    //     self.pause_dialing = false;
+    // }
+
+    fn handle_established_inbound_connection(
         &mut self,
-        peer_id: &PeerId,
-        connection: &ConnectionId,
-        _endpoint: &ConnectedPoint,
-        _failed_addresses: Option<&Vec<Multiaddr>>,
-        other_established: usize,
-    ) {
-        trace!("connection established {} ({})", peer_id, other_established);
-        self.set_peer_state(peer_id, PeerState::Connected(*connection));
+        connection_id: ConnectionId,
+        peer: PeerId,
+        local_addr: &Multiaddr,
+        remote_addr: &Multiaddr,
+    ) -> std::result::Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+        trace!("connection established {} (inbound)", peer);
+        self.set_peer_state(&peer, PeerState::Connected(connection_id));
         self.pause_dialing = false;
+        Ok(self.new_handler())
     }
 
-    fn inject_connection_closed(
+    fn handle_established_outbound_connection(
         &mut self,
-        peer_id: &PeerId,
-        _conn: &ConnectionId,
-        _endpoint: &ConnectedPoint,
-        _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
-        remaining_established: usize,
-    ) {
+        connection_id: ConnectionId,
+        peer: PeerId,
+        addr: &Multiaddr,
+        role_override: libp2p::core::Endpoint,
+    ) -> std::result::Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
+        trace!("connection established {} (outbound)", peer);
+        self.set_peer_state(&peer, PeerState::Connected(connection_id));
         self.pause_dialing = false;
-        if remaining_established == 0 {
-            // Last connection, close it
-            self.set_peer_state(peer_id, PeerState::Disconnected)
-        }
+        Ok(self.new_handler())
     }
 
-    fn inject_dial_failure(
+    // fn inject_connection_closed(
+    //     &mut self,
+    //     peer_id: &PeerId,
+    //     _conn: &ConnectionId,
+    //     _endpoint: &ConnectedPoint,
+    //     _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
+    //     remaining_established: usize,
+    // ) {
+    //     self.pause_dialing = false;
+    //     if remaining_established == 0 {
+    //         // Last connection, close it
+    //         self.set_peer_state(peer_id, PeerState::Disconnected)
+    //     }
+    // }
+
+    // fn inject_dial_failure(
+    //     &mut self,
+    //     peer_id: Option<PeerId>,
+    //     _handler: Self::ConnectionHandler,
+    //     error: &DialError,
+    // ) {
+    //     if let Some(peer_id) = peer_id {
+    //         if let DialError::ConnectionLimit(_) = error {
+    //             self.pause_dialing = true;
+    //             self.set_peer_state(&peer_id, PeerState::Disconnected);
+    //         } else {
+    //             self.set_peer_state(&peer_id, PeerState::DialFailure(Instant::now()));
+    //         }
+
+    //         trace!("inject_dial_failure {}, {:?}", peer_id, error);
+    //         let dials = &mut self.dials.lock().unwrap();
+    //         if let Some(mut dials) = dials.remove(&peer_id) {
+    //             while let Some((_id, sender)) = dials.pop() {
+    //                 let _ = sender.send(Err(error.to_string()));
+    //             }
+    //         }
+    //     }
+    // }
+
+    // fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm<Self::ConnectionHandler>) {
+
+    // }
+
+    fn handle_pending_inbound_connection(
         &mut self,
-        peer_id: Option<PeerId>,
-        _handler: Self::ConnectionHandler,
-        error: &DialError,
-    ) {
-        if let Some(peer_id) = peer_id {
-            if let DialError::ConnectionLimit(_) = error {
-                self.pause_dialing = true;
-                self.set_peer_state(&peer_id, PeerState::Disconnected);
-            } else {
-                self.set_peer_state(&peer_id, PeerState::DialFailure(Instant::now()));
-            }
-
-            trace!("inject_dial_failure {}, {:?}", peer_id, error);
-            let dials = &mut self.dials.lock().unwrap();
-            if let Some(mut dials) = dials.remove(&peer_id) {
-                while let Some((_id, sender)) = dials.pop() {
-                    let _ = sender.send(Err(error.to_string()));
-                }
-            }
-        }
+        _connection_id: ConnectionId,
+        _local_addr: &Multiaddr,
+        _remote_addr: &Multiaddr,
+    ) -> std::result::Result<(), libp2p::swarm::ConnectionDenied> {
+        Ok(())
     }
 
-    fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, event: HandlerEvent) {
-        // trace!("inject_event from {}, event: {:?}", peer_id, event);
-        match event {
-            HandlerEvent::Connected { protocol } => {
-                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
-                {
-                    let dials = &mut *self.dials.lock().unwrap();
-                    if let Some(mut dials) = dials.remove(&peer_id) {
-                        while let Some((id, sender)) = dials.pop() {
-                            if let Err(err) = sender.send(Ok((connection, Some(protocol)))) {
-                                warn!("dial:{}: failed to send dial response {:?}", id, err)
-                            }
-                        }
-                    }
-                }
-            }
-            HandlerEvent::ProtocolNotSuppported => {
-                self.set_peer_state(&peer_id, PeerState::Unresponsive);
-
-                let dials = &mut *self.dials.lock().unwrap();
-                if let Some(mut dials) = dials.remove(&peer_id) {
-                    while let Some((id, sender)) = dials.pop() {
-                        if let Err(err) = sender.send(Err("protocol not supported".into())) {
-                            warn!("dial:{} failed to send dial response {:?}", id, err)
-                        }
-                    }
-                }
-            }
-            HandlerEvent::Message {
-                mut message,
-                protocol,
-            } => {
-                // mark peer as responsive
-                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
-
-                message.verify_blocks();
-                self.receive_message(peer_id, message);
-            }
-            HandlerEvent::FailedToSendMessage { .. } => {
-                // Handle
-            }
+    fn handle_pending_outbound_connection(
+        &mut self,
+        _connection_id: ConnectionId,
+        maybe_peer: Option<PeerId>,
+        _addresses: &[Multiaddr],
+        _effective_role: libp2p::core::Endpoint,
+    ) -> std::result::Result<Vec<Multiaddr>, libp2p::swarm::ConnectionDenied> {
+        if let Some(peer) = maybe_peer {
+            self.set_peer_state(&peer, PeerState::Disconnected);
         }
+        Ok(Vec::new())
     }
+
+    // fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, event: HandlerEvent) {
+    //     // trace!("inject_event from {}, event: {:?}", peer_id, event);
+    //     match event {
+    //         HandlerEvent::Connected { protocol } => {
+    //             self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
+    //             {
+    //                 let dials = &mut *self.dials.lock().unwrap();
+    //                 if let Some(mut dials) = dials.remove(&peer_id) {
+    //                     while let Some((id, sender)) = dials.pop() {
+    //                         if let Err(err) = sender.send(Ok((connection, Some(protocol)))) {
+    //                             warn!("dial:{}: failed to send dial response {:?}", id, err)
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         HandlerEvent::ProtocolNotSuppported => {
+    //             self.set_peer_state(&peer_id, PeerState::Unresponsive);
+
+    //             let dials = &mut *self.dials.lock().unwrap();
+    //             if let Some(mut dials) = dials.remove(&peer_id) {
+    //                 while let Some((id, sender)) = dials.pop() {
+    //                     if let Err(err) = sender.send(Err("protocol not supported".into())) {
+    //                         warn!("dial:{} failed to send dial response {:?}", id, err)
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         HandlerEvent::Message {
+    //             mut message,
+    //             protocol,
+    //         } => {
+    //             // mark peer as responsive
+    //             self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
+
+    //             message.verify_blocks();
+    //             self.receive_message(peer_id, message);
+    //         }
+    //         HandlerEvent::FailedToSendMessage { .. } => {
+    //             // Handle
+    //         }
+    //     }
+    // }
 
     #[allow(clippy::type_complexity)]
     fn poll(
