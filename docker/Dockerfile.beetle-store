@@ -1,0 +1,51 @@
+################################################################################
+## Builder
+################################################################################
+FROM rust:latest AS builder
+
+RUN update-ca-certificates
+
+# rocksDB needs libclang
+RUN apt-get update && \
+  apt-get install -y \
+  clang libclang-dev
+
+# install latest protocol buffer compiler.
+ARG TARGETPLATFORM
+COPY ../docker/install_protoc.sh .
+RUN ./install_protoc.sh
+
+# set build env vars
+ENV RUST_BACKTRACE=1 \
+  PROTOC=/usr/local/bin/protoc \
+  PROTOC_INCLUDE=/usr/local/include
+
+# has the side effect of updating the crates.io index & installing rust toolchain
+# called in a separate step for nicer caching. the command itself will fail,
+# b/c empty-library is not a dependency, so we override with an exit code 0
+RUN cargo install empty-library; exit 0
+
+WORKDIR /beetle
+
+COPY ../ .
+
+RUN cargo build --bin beetle-store --profile=docker
+
+################################################################################
+## Final image
+################################################################################
+FROM gcr.io/distroless/cc
+
+WORKDIR /beetle
+
+# Copy our build, changing owndership to distroless-provided "nonroot" user,
+# (65532:65532)
+COPY --from=builder --chown=65532:65532 /beetle/target/docker/beetle-store ./
+
+# Use nonroot (unprivileged) user
+USER nonroot
+
+# expose the default RPC port
+EXPOSE 4402
+
+CMD ["/beetle/beetle-store"]

@@ -1,12 +1,12 @@
 use std::{path::PathBuf, time::Instant};
 
 use anyhow::{bail, Result};
+use beetle_car::CarReader;
+use beetle_rpc_client::{Client, Config as RpcClientConfig};
 use bytes::Bytes;
 use clap::Parser;
 use futures::{stream::TryStreamExt, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
-use iroh_car::CarReader;
-use iroh_rpc_client::{Client, Config as RpcClientConfig};
 use par_stream::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
@@ -52,10 +52,10 @@ async fn main() -> Result<()> {
         .try_par_map_unordered(None, move |(cid, data)| {
             move || {
                 let data = Bytes::from(data);
-                if iroh_util::verify_hash(&cid, &data) == Some(false) {
+                if beetle_util::verify_hash(&cid, &data) == Some(false) {
                     bail!("invalid hash {:?}", cid);
                 }
-                let links = iroh_unixfs::parse_links(&cid, &data).unwrap_or_default();
+                let links = beetle_unixfs::parse_links(&cid, &data).unwrap_or_default();
                 Ok((cid, data, links))
             }
         })

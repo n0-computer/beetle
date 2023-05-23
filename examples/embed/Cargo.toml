@@ -1,7 +1,7 @@
 [package]
-name = "iroh-example-embed"
+name = "beetle-example-embed"
 authors = ["team@n0.computer"]
-description = "Example of using iroh-embed"
+description = "Example of using beetle-embed"
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 futures-util.workspace = true
-iroh-api.workspace = true
-iroh-embed.workspace = true
+beetle-api.workspace = true
+beetle-embed.workspace = true
 testdir.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

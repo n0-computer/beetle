@@ -1,5 +1,5 @@
 [package]
-name = "iroh-example-importer"
+name = "beetle-example-importer"
 authors = ["team@n0.computer"]
 publish = false
 version.workspace = true
@@ -14,10 +14,10 @@ bytesize.workspace = true
 clap = { workspace = true, features = ["derive"] }
 futures.workspace = true
 indicatif.workspace = true
-iroh-car.workspace = true
-iroh-unixfs.workspace = true
-iroh-resolver.workspace = true
-iroh-rpc-client.workspace = true
-iroh-util.workspace = true
+beetle-car.workspace = true
+beetle-unixfs.workspace = true
+beetle-resolver.workspace = true
+beetle-rpc-client.workspace = true
+beetle-util.workspace = true
 par-stream = { workspace = true, features = ["runtime-tokio"]}
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

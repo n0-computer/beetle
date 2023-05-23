@@ -1,0 +1,42 @@
+[package]
+name = "beetle-one"
+readme = "README.md"
+description = "all of beetle in a single binary"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+bytes.workspace = true
+cid.workspace = true
+clap = { workspace = true, features = ["derive"] }
+config.workspace = true
+futures.workspace = true
+headers.workspace = true
+http-serde.workspace = true
+hyper.workspace = true
+beetle-gateway.workspace = true
+beetle-metrics.workspace = true
+beetle-p2p.workspace = true
+beetle-resolver.workspace = true
+beetle-unixfs.workspace = true
+beetle-rpc-client.workspace = true
+beetle-rpc-types.workspace = true
+beetle-store.workspace = true
+beetle-util.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls"] }
+serde = { workspace = true, features = ["derive"] }
+tempfile = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process"] }
+tracing.workspace = true
+
+[dev-dependencies]
+http.workspace = true
+
+[features]
+http-uds-gateway = ["tempfile"]
