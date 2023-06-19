@@ -109,11 +109,11 @@ jobs:
 
     - name: clippy default features
       run: |
-        cargo clippy --workspace --all-targets -- -D warnings
+        cargo clippy --workspace --all-targets -- -D warnings -A clippy::let_with_type_underscore # https://github.com/rust-lang/rust-clippy/issues/10498
 
     - name: clippy all features
       run: |
-        cargo clippy --workspace --all-features --all-targets -- -D warnings
+        cargo clippy --workspace --all-features --all-targets -- -D warnings -A clippy::let_with_type_underscore # https://github.com/rust-lang/rust-clippy/issues/10498
 
     - name: docs
       env:
