@@ -5,6 +5,7 @@ use bytes::Bytes;
 use futures::channel::oneshot::{channel as oneshot, Receiver as OneShotReceiver};
 use futures::StreamExt;
 use iroh_p2p::{GossipsubEvent, NetworkEvent};
+use iroh_unixfs::balanced_tree::DEFAULT_CODE;
 use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
 use libp2p::gossipsub::Sha256Topic;
 use rand::Rng;
@@ -58,14 +59,14 @@ impl Sender {
         } = self;
 
         let t = Sha256Topic::new(format!("iroh-share-{id}"));
-        let root_dir = dir_builder.build().await?;
+        let root_dir = dir_builder.build()?;
 
         let (done_sender, done_receiver) = oneshot();
 
         let p2p_rpc = p2p.rpc().try_p2p()?;
         let store = p2p.rpc().try_store()?;
         let (root, num_parts) = {
-            let parts = root_dir.encode();
+            let parts = root_dir.encode(DEFAULT_CODE);
             tokio::pin!(parts);
             let mut num_parts = 0;
             let mut root_cid = None;
@@ -157,11 +158,7 @@ impl Sender {
     ) -> Result<Transfer> {
         let name = name.into();
         // wrap in directory to preserve the name
-        let file = FileBuilder::new()
-            .name(name)
-            .content_bytes(data)
-            .build()
-            .await?;
+        let file = FileBuilder::new().name(name).content_bytes(data).build()?;
         let root_dir = DirectoryBuilder::new().add_file(file);
 
         self.transfer_from_dir_builder(root_dir).await

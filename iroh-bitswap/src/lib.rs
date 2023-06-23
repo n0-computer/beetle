@@ -77,19 +77,14 @@ pub struct Bitswap<S: Store> {
     _workers: Arc<Vec<JoinHandle<()>>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum PeerState {
     Connected(ConnectionId),
     Responsive(ConnectionId, ProtocolId),
     Unresponsive,
+    #[default]
     Disconnected,
     DialFailure(Instant),
-}
-
-impl Default for PeerState {
-    fn default() -> Self {
-        PeerState::Disconnected
-    }
 }
 
 impl PeerState {
@@ -146,7 +141,7 @@ impl<S: Store> Bitswap<S> {
         };
         let client = Client::new(network.clone(), store, cb, config.client).await;
 
-        let (sender_msg, mut receiver_msg) = mpsc::channel(2048);
+        let (sender_msg, mut receiver_msg) = mpsc::channel::<(PeerId, BitswapMessage)>(2048);
         let (sender_con, mut receiver_con) = mpsc::channel(2048);
         let (sender_dis, mut receiver_dis) = mpsc::channel(2048);
 
@@ -157,7 +152,13 @@ impl<S: Store> Bitswap<S> {
 
             async move {
                 // process messages serially but without blocking the p2p loop
-                while let Some((peer, message)) = receiver_msg.recv().await {
+                while let Some((peer, mut message)) = receiver_msg.recv().await {
+                    let message = tokio::task::spawn_blocking(move || {
+                        message.verify_blocks();
+                        message
+                    })
+                    .await
+                    .expect("cannot spawn blocking thread");
                     if let Some(ref server) = server {
                         futures::future::join(
                             client.receive_message(&peer, &message),
@@ -490,14 +491,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     }
                 }
             }
-            HandlerEvent::Message {
-                mut message,
-                protocol,
-            } => {
-                // mark peer as responsive
+            HandlerEvent::Message { message, protocol } => {
                 self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
-
-                message.verify_blocks();
                 self.receive_message(peer_id, message);
             }
             HandlerEvent::FailedToSendMessage { .. } => {
