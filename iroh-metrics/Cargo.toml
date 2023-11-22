@@ -38,7 +38,6 @@ features = [
   "yamux",
   "tcp",
   "dns",
-  "mplex",
   "request-response",
   "websocket",
   "serde",
@@ -47,7 +46,7 @@ features = [
   "dcutr",
   "autonat",
   "tokio",
-] 
+]
 optional = true
 
 [features]
